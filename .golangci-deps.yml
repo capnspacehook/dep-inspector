@@ -1,0 +1,82 @@
+issues:
+  exclude-rules:
+    # Ignore gocritic checks that produce too many false positives or
+    # don't check for potential bugs a downstream application could
+    # observe. Ideally these would be disabled below but gocritic checks
+    # can't be both selectively enabled and disabled.
+    - linters:
+        - gocritic
+      text: "appendAssign:"
+    - linters:
+        - gocritic
+      text: "deprecatedComment:"
+    # For some reason typecheck can have many false positives, skip them
+    # as ultimately if typechecking errors do exist, they will be found
+    # during development
+    - linters:
+        - typecheck
+      text: ".*"
+  max-same-issues: 0
+  max-issues-per-linter: 0
+
+linters:
+  disable-all: true
+  enable:
+    - asasalint
+    - bidichk
+    - durationcheck
+    - errcheck
+    - gocritic
+    - govet
+    - ineffassign
+    - nilerr
+    - nilnil
+    - reassign
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - usestdlibvars
+
+linters-settings:
+  errcheck:
+    exclude-functions:
+      # TODO: doesn't work?
+      - io.Copy(ioutil.Discard)
+      - io.CopyN(ioutil.Discard)
+      - (go.uber.org/zap/zapcore.ObjectEncoder).AddObject
+  errorlint:
+    errorf: false
+  gocritic:
+    enabled-checks:
+      - truncateCmp
+      - sqlQuery
+    enabled-tags:
+      - diagnostic
+    disabled-tags:
+      - experimental
+      - opinionated
+      - performance
+      - style
+  govet:
+    disable:
+      - composites
+  reassign:
+    patterns:
+      # TODO: add stdlib vars
+      - "EOF"
+      - "Err.*"
+  revive:
+    rules:
+      - name: blank-imports
+        disabled: true
+
+run:
+  tests: false
+  timeout: 10m
+
+# TODO: 
+# - ignore main pkg dirs
+# - check if unsafe is imported
+# - check if embed is imported
+#   - check size diff of embedded files
+# - check binary diff of with updated dep(s)
