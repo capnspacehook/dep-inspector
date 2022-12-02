@@ -80,7 +80,6 @@ func mainRetCode() int {
 		return 1
 	}
 
-	// may also want to add syscall.SIGTERM on unix based OSes
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
