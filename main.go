@@ -107,7 +107,7 @@ TODO:
 
 go list -json -deps
 
-find packages with embeds/unsafe
+find packages that import specific packages
 
 staticcheck -checks="SA1*,SA2*,SA4*,SA5*,SA9*" -f=json -tests=false <path>/...
 */
@@ -302,7 +302,7 @@ func issuesEqual(dep string, a, b lintIssue) bool {
 
 	// compare source code lines with leading and trailing whitespace
 	// removed; if only whitespace changed between old and new versions
-	// the issue is semantically the same
+	// the line(s) are semantically the same
 	for i := range a.SourceLines {
 		srcLineA := strings.TrimSpace(a.SourceLines[i])
 		srcLineB := strings.TrimSpace(b.SourceLines[i])
@@ -312,6 +312,31 @@ func issuesEqual(dep string, a, b lintIssue) bool {
 	}
 
 	return true
+}
+
+type listedPackage struct {
+	Name       string
+	ImportPath string
+	Dir        string
+	Standard   bool
+	Imports    []string
+	Deps       []string
+	Incomplete bool
+}
+
+func listPackage(dir string, pkg string) (map[string]*listedPackage, error) {
+	var listBuf bytes.Buffer
+
+	err := runCommand(&listBuf, false, dir, "go", "list", "-deps", "-json", pkg)
+	if err != nil {
+		return nil, fmt.Errorf("error listing package %q: %v", pkg, err)
+	}
+
+	dec := json.NewDecoder(&listBuf)
+	listedPkgs := make(map[string]*listedPackage)
+	for dec.More() {
+		dec.Decode()
+	}
 }
 
 func getDepRelPath(dep, path string) string {
@@ -383,14 +408,6 @@ func buildCommand(writer io.Writer, stderr bool, dir string, env []string, args 
 	}
 
 	return cmd
-}
-
-func stripV(s string) string {
-	if s[0] == 'v' {
-		return s[1:]
-	}
-
-	return s
 }
 
 func makeVersionStr(dep, version string) string {
