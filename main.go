@@ -140,7 +140,7 @@ func mainRetCode() int {
 func lintDep(dep, oldVer, newVer string) error {
 	// find GOMODCACHE
 	var sb strings.Builder
-	err := runCommand(&sb, false, ".", "go", "env", "GOMODCACHE")
+	err := runCommand(&sb, false, "go", "env", "GOMODCACHE")
 	if err != nil {
 		return fmt.Errorf("error getting GOMODCACHE: %v", err)
 	}
@@ -150,11 +150,11 @@ func lintDep(dep, oldVer, newVer string) error {
 	}
 	goModCache := sb.String()[:sb.Len()-1]
 
-	oldVerResults, err := lintDepVersion(".", goModCache, dep, oldVer)
+	oldVerResults, err := lintDepVersion(goModCache, dep, oldVer)
 	if err != nil {
 		return err
 	}
-	newVerResults, err := lintDepVersion(".", goModCache, dep, newVer)
+	newVerResults, err := lintDepVersion(goModCache, dep, newVer)
 	if err != nil {
 		return err
 	}
@@ -225,31 +225,31 @@ type lintPosition struct {
 	Column   int
 }
 
-func lintDepVersion(dir, goModCache, dep, version string) ([]lintIssue, error) {
+func lintDepVersion(goModCache, dep, version string) ([]lintIssue, error) {
 	// add dep to go.mod so linting it will work
 	versionStr := makeVersionStr(dep, version)
-	err := runGoCommand(dir, "go", "get", versionStr)
+	err := runGoCommand("go", "get", versionStr)
 	if err != nil {
 		return nil, fmt.Errorf("error downloading %q: %v", versionStr, err)
 	}
-	err = runGoCommand(dir, "go", "mod", "tidy")
+	err = runGoCommand("go", "mod", "tidy")
 	if err != nil {
 		return nil, fmt.Errorf("error tidying modules: %v", err)
 	}
 
-	pkgs, err := listPackage(".", "")
+	pkgs, err := listPackage("")
 	if err != nil {
 		return nil, err
 	}
 
 	log.Printf("linting %s with golangci-lint", versionStr)
-	golangciIssues, err := golangciLint(dir, dep, pkgs)
+	golangciIssues, err := golangciLint(dep, pkgs)
 	if err != nil {
 		return nil, fmt.Errorf("error linting %s with golangci-lint: %v", versionStr, err)
 	}
 
 	log.Printf("linting %s with staticcheck", versionStr)
-	staticcheckIssues, err := staticcheckLint(dir, dep, pkgs)
+	staticcheckIssues, err := staticcheckLint(dep, pkgs)
 	if err != nil {
 		return nil, fmt.Errorf("error linting %s with staticcheck: %v", versionStr, err)
 	}
@@ -297,16 +297,16 @@ type listedModule struct {
 	Path string
 }
 
-func listPackage(dir string, pkg string) (usedPackages, error) {
+func listPackage(pkg string) (usedPackages, error) {
 	var listBuf bytes.Buffer
 
 	if pkg != "" {
-		err := runCommand(&listBuf, false, dir, "go", "list", "-deps", "-json", pkg)
+		err := runCommand(&listBuf, false, "go", "list", "-deps", "-json", pkg)
 		if err != nil {
 			return nil, fmt.Errorf("error listing dependencies of %s: %v", pkg, err)
 		}
 	} else {
-		err := runCommand(&listBuf, false, dir, "go", "list", "-deps", "-json")
+		err := runCommand(&listBuf, false, "go", "list", "-deps", "-json")
 		if err != nil {
 			return nil, fmt.Errorf("error listing dependencies: %v", err)
 		}
@@ -325,7 +325,7 @@ func listPackage(dir string, pkg string) (usedPackages, error) {
 	return listedPkgs, nil
 }
 
-func golangciLint(dir, dep string, pkgs usedPackages) ([]lintIssue, error) {
+func golangciLint(dep string, pkgs usedPackages) ([]lintIssue, error) {
 	var dirs []string
 	for _, pkg := range pkgs {
 		if !pkg.Standard && pkg.Module.Path == dep {
@@ -348,7 +348,7 @@ func golangciLint(dir, dep string, pkgs usedPackages) ([]lintIssue, error) {
 	var lintBuf bytes.Buffer
 	cmd := []string{"golangci-lint", "run", "-c", golangciCfgPath, "--out-format=json"}
 	cmd = append(cmd, dirs...)
-	err = runCommand(&lintBuf, false, dir, cmd...)
+	err = runCommand(&lintBuf, false, cmd...)
 	if err != nil {
 		// golangci-lint will exit with 1 if any linters returned issues,
 		// but that doesn't mean it itself failed
@@ -379,7 +379,7 @@ type staticcheckPosition struct {
 	Column int
 }
 
-func staticcheckLint(dir, dep string, pkgs usedPackages) ([]lintIssue, error) {
+func staticcheckLint(dep string, pkgs usedPackages) ([]lintIssue, error) {
 	var dirs []string
 	for _, pkg := range pkgs {
 		if !pkg.Standard && pkg.Module.Path == dep {
@@ -390,7 +390,7 @@ func staticcheckLint(dir, dep string, pkgs usedPackages) ([]lintIssue, error) {
 	var lintBuf bytes.Buffer
 	cmd := []string{"staticcheck", "-checks=SA1*,SA2*,SA4*,SA5*,SA9*", "-f=json", "-tests=false"}
 	cmd = append(cmd, dirs...)
-	err := runCommand(&lintBuf, false, dir, cmd...)
+	err := runCommand(&lintBuf, false, cmd...)
 	if err != nil {
 		// staticcheck will exit with 1 if any issues are found, but
 		// that doesn't mean it itself failed
@@ -535,7 +535,7 @@ func printIssues(issues []lintIssue, versionStr string) {
 	}
 }
 
-func runGoCommand(dir string, args ...string) error {
+func runGoCommand(args ...string) error {
 	var writer io.Writer
 	if verbose {
 		writer = os.Stderr
@@ -546,14 +546,14 @@ func runGoCommand(dir string, args ...string) error {
 		env = append(env, fmt.Sprintf("%s=%s", envVar, os.Getenv(envVar)))
 	}
 
-	return buildCommand(writer, true, dir, env, args...).Run()
+	return buildCommand(writer, true, env, args...).Run()
 }
 
-func runCommand(writer io.Writer, stderr bool, dir string, args ...string) error {
-	return buildCommand(writer, stderr, dir, nil, args...).Run()
+func runCommand(writer io.Writer, stderr bool, args ...string) error {
+	return buildCommand(writer, stderr, nil, args...).Run()
 }
 
-func buildCommand(writer io.Writer, stderr bool, dir string, env []string, args ...string) *exec.Cmd {
+func buildCommand(writer io.Writer, stderr bool, env []string, args ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	if len(args) == 1 {
 		cmd = exec.Command(args[0])
@@ -561,7 +561,6 @@ func buildCommand(writer io.Writer, stderr bool, dir string, env []string, args 
 		cmd = exec.Command(args[0], args[1:]...)
 	}
 
-	cmd.Dir = dir
 	cmd.Env = env
 	cmd.Stdout = writer
 	if stderr {
