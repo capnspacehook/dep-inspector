@@ -198,6 +198,12 @@ func lintDep(dep, oldVer, newVer string) error {
 		printIssues(newIssues, makeVersionStr(dep, newVer))
 	}
 
+	fmt.Printf("total:\nfixed issues: %d\nstale issues: %d\nnew issues:   %d\n",
+		len(fixedIssues),
+		len(staleIssues),
+		len(newIssues),
+	)
+
 	return nil
 }
 
@@ -315,7 +321,7 @@ func listPackage(dir string, pkg string) (usedPackages, error) {
 func golangciLint(dir, dep string, pkgs usedPackages) ([]lintIssue, error) {
 	var dirs []string
 	for _, pkg := range pkgs {
-		if pkg.Module.Path == dep {
+		if !pkg.Standard && pkg.Module.Path == dep {
 			dirs = append(dirs, pkg.Dir)
 		}
 	}
@@ -369,7 +375,7 @@ type staticcheckPosition struct {
 func staticcheckLint(dir, dep string, pkgs usedPackages) ([]lintIssue, error) {
 	var dirs []string
 	for _, pkg := range pkgs {
-		if pkg.Module.Path == dep {
+		if !pkg.Standard && pkg.Module.Path == dep {
 			dirs = append(dirs, pkg.Dir)
 		}
 	}
