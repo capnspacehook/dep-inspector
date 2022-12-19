@@ -248,14 +248,13 @@ func lintDepVersion(dir, goModCache, dep, version string) ([]lintIssue, error) {
 		return nil, fmt.Errorf("error linting %s with golangci-lint: %v", versionStr, err)
 	}
 
-	// TODO: for each package, find list of Go files for that version
-	// and pass the filenames to staticcheck
 	log.Printf("linting %s with staticcheck", versionStr)
 	staticcheckIssues, err := staticcheckLint(dir, dep, pkgs)
 	if err != nil {
 		return nil, fmt.Errorf("error linting %s with staticcheck: %v", versionStr, err)
 	}
 
+	// sort issues by linter and file
 	issues := append(golangciIssues, staticcheckIssues...)
 	slices.SortFunc(issues, func(a, b lintIssue) bool {
 		if a.FromLinter != b.FromLinter {
@@ -269,6 +268,14 @@ func lintDepVersion(dir, goModCache, dep, version string) ([]lintIssue, error) {
 		}
 		return a.Pos.Column < b.Pos.Column
 	})
+	// make leading whitespace of source code lines uniform
+	for i := range issues {
+		for j := range issues[i].SourceLines {
+			srcLine := issues[i].SourceLines[j]
+			srcLine = "\t" + strings.TrimSpace(srcLine)
+			issues[i].SourceLines[j] = srcLine
+		}
+	}
 
 	return issues, nil
 }
@@ -406,8 +413,8 @@ func staticcheckLint(dir, dep string, pkgs usedPackages) ([]lintIssue, error) {
 	issues := make([]lintIssue, len(sIssues))
 	for i, sIssue := range sIssues {
 		issue := lintIssue{
-			FromLinter: "staticcheck",
-			Text:       fmt.Sprintf("%s: %s", sIssue.Code, sIssue.Message),
+			FromLinter: "staticcheck " + sIssue.Code,
+			Text:       trimLinterMsg(sIssue.Message),
 			Pos: lintPosition{
 				Filename: sIssue.Location.File,
 				Offset:   sIssue.End.Column, // ?
@@ -423,6 +430,14 @@ func staticcheckLint(dir, dep string, pkgs usedPackages) ([]lintIssue, error) {
 	}
 
 	return issues, nil
+}
+
+func trimLinterMsg(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if msg[len(msg)-1] == '.' {
+		msg = msg[:len(msg)-1]
+	}
+	return msg
 }
 
 func getSrcLines(sIssue staticcheckIssue) ([]string, error) {

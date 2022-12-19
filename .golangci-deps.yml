@@ -76,10 +76,3 @@ linters-settings:
 run:
   tests: false
   timeout: 10m
-
-# TODO: 
-# - ignore main pkg dirs
-# - check if unsafe is imported
-# - check if embed is imported
-#   - check size diff of embedded files
-# - check binary diff of with updated dep(s)
