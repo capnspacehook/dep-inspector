@@ -37,7 +37,7 @@ type lintPosition struct {
 	Column   int
 }
 
-func lintDepVersion(goModCache, dep, versionStr string, pkgs usedPackages) ([]lintIssue, error) {
+func lintDepVersion(goModCache, dep, versionStr string, pkgs packagesInfo) ([]lintIssue, error) {
 	var dirs []string
 	for _, pkg := range pkgs {
 		if !pkg.Standard && pkg.Module.Path == dep {

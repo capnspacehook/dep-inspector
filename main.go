@@ -67,6 +67,8 @@ func main() {
 /*
 TODO:
 
+- inspect changed indirect deps as well
+
 - check if CGO is used
 - check if unsafe is imported
   - details on linkname directives
@@ -98,9 +100,7 @@ TODO:
   - try and determine type of file
     - https://pkg.go.dev/github.com/h2non/filetype#Match
 	- only need first 262 bytes of file
-- check binary diff of with updated dep(s)
-
-find packages that import specific packages
+- check binary diff of with updated dep(s)?
 */
 
 func mainRetCode() int {
@@ -240,7 +240,7 @@ func inspectDep(dep, oldVer, newVer string) (*inspectResults, error) {
 	}, nil
 }
 
-func setupDepVersion(versionStr string) (usedPackages, error) {
+func setupDepVersion(versionStr string) (packagesInfo, error) {
 	// add dep to go.mod so linting it will work
 	err := runGoCommand("go", "get", versionStr)
 	if err != nil {
@@ -305,6 +305,13 @@ func printLinterIssues(issues []lintIssue, versionStr string) {
 
 func printPkgIssues(issues []packageIssue) {
 	for _, issue := range issues {
-		fmt.Printf("%s imports %s\n\n", issue.srcPkg, issue.unwantedPkg)
+		fmt.Printf("%s imports %s\n", issue.srcPkg, issue.unwantedPkg)
+		if len(issue.pkgChain) > 0 {
+			fmt.Println("import chain:")
+			for _, pkg := range issue.pkgChain {
+				fmt.Println(pkg)
+			}
+		}
+		fmt.Println()
 	}
 }

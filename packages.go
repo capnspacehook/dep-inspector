@@ -4,23 +4,49 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"golang.org/x/exp/slices"
 )
 
-var unwantedPkgs = []string{
-	"os/signal",
-	"os/exec",
-	"runtime",
-	"runtime/debug",
-	"runtime/metrics",
-	"runtime/pprof",
-	"runtime/trace",
-	"reflect",
-	"unsafe",
-}
+var (
+	unwantedPkgs = []string{
+		"C",
+		"embed",
+		"os/signal",
+		"os/exec",
+		"runtime",
+		"runtime/debug",
+		"runtime/metrics",
+		"runtime/pprof",
+		"runtime/trace",
+		"reflect",
+		"unsafe",
+	}
+	unwantedFuncs = map[string][]string{
+		"runtime": {
+			"Breakpoint",
+			"GC",
+			"GOMAXPROCS",
+			"LockOSThread",
+			"MemProfile",
+			"MutexProfile",
+			"ReadMemStats",
+			"ReadTrace",
+			"SetBlockProfileRate",
+			"SetCPUProfileRate",
+			"SetCgoTraceback",
+			"SetFinalizer",
+			"SetMutexProfileFraction",
+			"StartTrace",
+			"StopTrace",
+			"ThreadCreateProfile",
+			"UnlockOSThread",
+		},
+	}
+)
 
-type usedPackages map[string]*listedPackage
+type packagesInfo map[string]*listedPackage
 
 type listedPackage struct {
 	Dir        string
@@ -34,10 +60,11 @@ type listedPackage struct {
 }
 
 type listedModule struct {
-	Path string
+	Path    string
+	Version string
 }
 
-func listPackages(pkgs ...string) (usedPackages, error) {
+func listPackages(pkgs ...string) (packagesInfo, error) {
 	var listBuf bytes.Buffer
 	cmd := []string{"go", "list", "-deps", "-json"}
 	cmd = append(cmd, pkgs...)
@@ -47,7 +74,7 @@ func listPackages(pkgs ...string) (usedPackages, error) {
 	}
 
 	dec := json.NewDecoder(&listBuf)
-	listedPkgs := make(usedPackages)
+	listedPkgs := make(packagesInfo)
 	for dec.More() {
 		var pkg listedPackage
 		if err := dec.Decode(&pkg); err != nil {
@@ -65,39 +92,54 @@ type packageIssue struct {
 	unwantedPkg string
 }
 
-func findUnwantedImports(dep string, pkgs usedPackages) ([]packageIssue, error) {
+func findUnwantedImports(dep string, pkgs packagesInfo) ([]packageIssue, error) {
 	var depPkgs []string
 	for _, pkg := range pkgs {
 		if !pkg.Standard && pkg.Module.Path == dep {
 			depPkgs = append(depPkgs, pkg.ImportPath)
 		}
 	}
-	pkgs, err := listPackages(depPkgs...)
-	if err != nil {
-		return nil, err
-	}
+	seen := make(map[string]struct{})
+	return searchPkgs(depPkgs, pkgs, nil, seen)
+}
 
+func searchPkgs(pkgs []string, pkgInfo packagesInfo, stack []string, seen map[string]struct{}) ([]packageIssue, error) {
 	var pkgIssues []packageIssue
-	for _, p := range depPkgs {
-		pkg, ok := pkgs[p]
+	for _, p := range pkgs {
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		pkg, ok := pkgInfo[p]
 		if !ok {
 			return nil, fmt.Errorf("could not find package %s", p)
 		}
-		foundImps := findIn(pkg.Imports, unwantedPkgs)
-		for _, f := range foundImps {
-			pkgIssues = append(pkgIssues, packageIssue{
-				srcPkg:      p,
-				unwantedPkg: f,
-			})
-		}
-		// TODO: always do this?
-		if len(foundImps) != 0 {
+		if pkg.Standard {
 			continue
 		}
+		seen[pkg.ImportPath] = struct{}{}
+		log.Println(p)
 
-		// foundDeps := findIn(pkg.Deps, unwantedPkgs)
-		// for _, f := range foundDeps {
-		// }
+		foundImps := findIn(pkg.Imports, unwantedPkgs)
+		for _, f := range foundImps {
+			pkgIssue := packageIssue{
+				srcPkg:      p,
+				unwantedPkg: f,
+			}
+			if len(stack) > 0 {
+				pkgIssue.pkgChain = append(stack, p)
+			}
+			pkgIssues = append(pkgIssues, pkgIssue)
+		}
+
+		foundDeps := findIn(pkg.Deps, unwantedPkgs)
+		if len(foundDeps) == 0 {
+			continue
+		}
+		depIssues, err := searchPkgs(pkg.Deps, pkgInfo, append(stack, p), seen)
+		if err != nil {
+			return nil, err
+		}
+		pkgIssues = append(pkgIssues, depIssues...)
 	}
 
 	return pkgIssues, nil
