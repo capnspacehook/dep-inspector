@@ -1,18 +1,11 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	_ "embed"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 
@@ -30,9 +23,6 @@ var (
 	logPath      string
 	verbose      bool
 	printVersion bool
-
-	//go:embed .golangci-deps.yml
-	golangciCfgContents []byte
 
 	goEnvVars = []string{
 		"HOME",
@@ -60,6 +50,11 @@ For more information, see https://github.com/capnspacehook/dep-inspector.
 
 func init() {
 	flag.Usage = usage
+	// TODO: add flags for:
+	// - lint tests
+	// - merge golangci-lint config
+	// - specify staticcheck checks
+	// - build tags
 	flag.StringVar(&logPath, "l", "stdout", "path to log to")
 	flag.BoolVar(&verbose, "v", false, "print commands being run and verbose information")
 	flag.BoolVar(&printVersion, "version", false, "print version and build information and exit")
@@ -72,7 +67,6 @@ func main() {
 /*
 TODO:
 
-- ignore main pkg dirs
 - check if CGO is used
 - check if unsafe is imported
   - details on linkname directives
@@ -106,8 +100,6 @@ TODO:
 	- only need first 262 bytes of file
 - check binary diff of with updated dep(s)
 
-go list -json -deps
-
 find packages that import specific packages
 */
 
@@ -129,105 +121,127 @@ func mainRetCode() int {
 		return 2
 	}
 
-	if err := lintDep(flag.Arg(0), flag.Arg(1), flag.Arg(2)); err != nil {
+	dep := flag.Arg(0)
+	oldVer := flag.Arg(1)
+	newVer := flag.Arg(2)
+	results, err := inspectDep(dep, oldVer, newVer)
+	if err != nil {
 		log.Println(err)
 		return 1
 	}
 
+	// print linter issues
+	if len(results.fixedIssues) > 0 {
+		fmt.Println("fixed issues:")
+		printLinterIssues(results.fixedIssues, makeVersionStr(dep, oldVer))
+	}
+	if len(results.staleIssues) > 0 {
+		fmt.Println("stale issues:")
+		printLinterIssues(results.staleIssues, makeVersionStr(dep, newVer))
+	}
+	if len(results.newIssues) > 0 {
+		fmt.Println("new issues:")
+		printLinterIssues(results.newIssues, makeVersionStr(dep, newVer))
+	}
+	fmt.Printf("total:\nfixed issues: %d\nstale issues: %d\nnew issues:   %d\n\n",
+		len(results.fixedIssues),
+		len(results.staleIssues),
+		len(results.newIssues),
+	)
+
+	// print package issues
+	if len(results.removedPkgs) > 0 {
+		fmt.Println("removed unwanted packages:")
+		printPkgIssues(results.removedPkgs)
+	}
+	if len(results.stalePkgs) > 0 {
+		fmt.Println("stale unwanted packages:")
+		printPkgIssues(results.stalePkgs)
+	}
+	if len(results.addedPkgs) > 0 {
+		fmt.Println("added unwanted packages:")
+		printPkgIssues(results.addedPkgs)
+	}
+	fmt.Printf("total:\nadded unwanted packages: %d\nstale unwanted packages: %d\nadded unwanted packages: %d\n",
+		len(results.removedPkgs),
+		len(results.stalePkgs),
+		len(results.addedPkgs),
+	)
+
 	return 0
 }
 
-func lintDep(dep, oldVer, newVer string) error {
+type inspectResults struct {
+	fixedIssues []lintIssue
+	staleIssues []lintIssue
+	newIssues   []lintIssue
+
+	removedPkgs []packageIssue
+	stalePkgs   []packageIssue
+	addedPkgs   []packageIssue
+}
+
+func inspectDep(dep, oldVer, newVer string) (*inspectResults, error) {
 	// find GOMODCACHE
 	var sb strings.Builder
 	err := runCommand(&sb, false, "go", "env", "GOMODCACHE")
 	if err != nil {
-		return fmt.Errorf("error getting GOMODCACHE: %v", err)
+		return nil, fmt.Errorf("error getting GOMODCACHE: %v", err)
 	}
 	// 'go env' output always ends with a newline
 	if sb.Len() < 2 {
-		return errors.New("GOMODCACHE is empty")
+		return nil, errors.New("GOMODCACHE is empty")
 	}
 	goModCache := sb.String()[:sb.Len()-1]
 
-	oldVerResults, err := lintDepVersion(goModCache, dep, oldVer)
+	// inspect old version
+	oldVerStr := makeVersionStr(dep, oldVer)
+	oldPkgs, err := setupDepVersion(oldVerStr)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	newVerResults, err := lintDepVersion(goModCache, dep, newVer)
+	oldPkgIssues, err := findUnwantedImports(dep, oldPkgs)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	oldLintIssues, err := lintDepVersion(goModCache, dep, oldVerStr, oldPkgs)
+	if err != nil {
+		return nil, err
 	}
 
-	var (
-		fixedIssues []lintIssue
-		staleIssues []lintIssue
-		newIssues   []lintIssue
-	)
-
-	for _, issue := range oldVerResults {
-		idx := slices.IndexFunc(newVerResults, func(li lintIssue) bool {
-			return issuesEqual(dep, li, issue)
-		})
-		if idx == -1 {
-			fixedIssues = append(fixedIssues, issue)
-			continue
-		}
-		staleIssues = append(staleIssues, newVerResults[idx])
+	// inspect new version
+	newVerStr := makeVersionStr(dep, newVer)
+	newPkgs, err := setupDepVersion(newVerStr)
+	if err != nil {
+		return nil, err
 	}
-	for _, issue := range newVerResults {
-		idx := slices.IndexFunc(oldVerResults, func(li lintIssue) bool {
-			return issuesEqual(dep, li, issue)
-		})
-		if idx != -1 {
-			continue
-		}
-		newIssues = append(newIssues, issue)
+	newPkgIssues, err := findUnwantedImports(dep, newPkgs)
+	if err != nil {
+		return nil, err
+	}
+	newLintIssues, err := lintDepVersion(goModCache, dep, newVerStr, newPkgs)
+	if err != nil {
+		return nil, err
 	}
 
-	if len(fixedIssues) > 0 {
-		fmt.Println("fixed issues:")
-		printIssues(fixedIssues, makeVersionStr(dep, oldVer))
-	}
-	if len(staleIssues) > 0 {
-		fmt.Println("stale issues:")
-		printIssues(staleIssues, makeVersionStr(dep, newVer))
-	}
-	if len(newIssues) > 0 {
-		fmt.Println("new issues:")
-		printIssues(newIssues, makeVersionStr(dep, newVer))
-	}
+	// process linter and package issues
+	fixedIssues, staleIssues, newIssues := processIssues(oldLintIssues, newLintIssues, func(a, b lintIssue) bool {
+		return issuesEqual(dep, a, b)
+	})
+	removedPkgs, stalePkgs, addedPkgs := processIssues(oldPkgIssues, newPkgIssues, pkgIssuesEqual)
 
-	fmt.Printf("total:\nfixed issues: %d\nstale issues: %d\nnew issues:   %d\n",
-		len(fixedIssues),
-		len(staleIssues),
-		len(newIssues),
-	)
-
-	return nil
+	return &inspectResults{
+		fixedIssues: fixedIssues,
+		staleIssues: staleIssues,
+		newIssues:   newIssues,
+		removedPkgs: removedPkgs,
+		stalePkgs:   stalePkgs,
+		addedPkgs:   addedPkgs,
+	}, nil
 }
 
-type lintResult struct {
-	Issues []lintIssue
-}
-
-type lintIssue struct {
-	FromLinter  string
-	Text        string
-	SourceLines []string
-	Pos         lintPosition
-}
-
-type lintPosition struct {
-	Filename string
-	Offset   int
-	Line     int
-	Column   int
-}
-
-func lintDepVersion(goModCache, dep, version string) ([]lintIssue, error) {
+func setupDepVersion(versionStr string) (usedPackages, error) {
 	// add dep to go.mod so linting it will work
-	versionStr := makeVersionStr(dep, version)
 	err := runGoCommand("go", "get", versionStr)
 	if err != nil {
 		return nil, fmt.Errorf("error downloading %q: %v", versionStr, err)
@@ -237,290 +251,44 @@ func lintDepVersion(goModCache, dep, version string) ([]lintIssue, error) {
 		return nil, fmt.Errorf("error tidying modules: %v", err)
 	}
 
-	pkgs, err := listPackage("")
+	pkgs, err := listPackages()
 	if err != nil {
 		return nil, err
 	}
 
-	log.Printf("linting %s with golangci-lint", versionStr)
-	golangciIssues, err := golangciLint(dep, pkgs)
-	if err != nil {
-		return nil, fmt.Errorf("error linting %s with golangci-lint: %v", versionStr, err)
-	}
-
-	log.Printf("linting %s with staticcheck", versionStr)
-	staticcheckIssues, err := staticcheckLint(dep, pkgs)
-	if err != nil {
-		return nil, fmt.Errorf("error linting %s with staticcheck: %v", versionStr, err)
-	}
-
-	// sort issues by linter and file
-	issues := append(golangciIssues, staticcheckIssues...)
-	slices.SortFunc(issues, func(a, b lintIssue) bool {
-		if a.FromLinter != b.FromLinter {
-			return a.FromLinter < b.FromLinter
-		}
-		if a.Pos.Filename != b.Pos.Filename {
-			return a.Pos.Filename < b.Pos.Filename
-		}
-		if a.Pos.Line != b.Pos.Line {
-			return a.Pos.Line < b.Pos.Line
-		}
-		return a.Pos.Column < b.Pos.Column
-	})
-	// make leading whitespace of source code lines uniform
-	for i := range issues {
-		for j := range issues[i].SourceLines {
-			srcLine := issues[i].SourceLines[j]
-			srcLine = "\t" + strings.TrimSpace(srcLine)
-			issues[i].SourceLines[j] = srcLine
-		}
-	}
-
-	return issues, nil
+	return pkgs, nil
 }
 
-type usedPackages map[string]*listedPackage
+func processIssues[T any](oldVerIssues, newVerIssues []T, equal func(a, b T) bool) ([]T, []T, []T) {
+	var (
+		fixedIssues []T
+		staleIssues []T
+		newIssues   []T
+	)
 
-type listedPackage struct {
-	Dir        string
-	ImportPath string
-	Name       string
-	Module     listedModule
-	Standard   bool
-	Imports    []string
-	Deps       []string
-	Incomplete bool
+	for _, issue := range oldVerIssues {
+		idx := slices.IndexFunc(newVerIssues, func(issue2 T) bool {
+			return equal(issue, issue2)
+		})
+		if idx == -1 {
+			fixedIssues = append(fixedIssues, issue)
+		} else {
+			staleIssues = append(staleIssues, newVerIssues[idx])
+		}
+	}
+	for _, issue := range newVerIssues {
+		idx := slices.IndexFunc(oldVerIssues, func(issue2 T) bool {
+			return equal(issue, issue2)
+		})
+		if idx == -1 {
+			newIssues = append(newIssues, issue)
+		}
+	}
+
+	return fixedIssues, staleIssues, newIssues
 }
 
-type listedModule struct {
-	Path string
-}
-
-func listPackage(pkg string) (usedPackages, error) {
-	var listBuf bytes.Buffer
-
-	if pkg != "" {
-		err := runCommand(&listBuf, false, "go", "list", "-deps", "-json", pkg)
-		if err != nil {
-			return nil, fmt.Errorf("error listing dependencies of %s: %v", pkg, err)
-		}
-	} else {
-		err := runCommand(&listBuf, false, "go", "list", "-deps", "-json")
-		if err != nil {
-			return nil, fmt.Errorf("error listing dependencies: %v", err)
-		}
-	}
-
-	dec := json.NewDecoder(&listBuf)
-	listedPkgs := make(usedPackages)
-	for dec.More() {
-		var pkg listedPackage
-		if err := dec.Decode(&pkg); err != nil {
-			return nil, fmt.Errorf("error decoding: %v", err)
-		}
-		listedPkgs[pkg.ImportPath] = &pkg
-	}
-
-	return listedPkgs, nil
-}
-
-func golangciLint(dep string, pkgs usedPackages) ([]lintIssue, error) {
-	var dirs []string
-	for _, pkg := range pkgs {
-		if !pkg.Standard && pkg.Module.Path == dep {
-			dirs = append(dirs, pkg.Dir)
-		}
-	}
-
-	// write embedded golangci-lint config to a temporary file to it can
-	// be used later
-	cfgDir, err := os.MkdirTemp("", modName)
-	if err != nil {
-		return nil, fmt.Errorf("error creating temporary file: %v", err)
-	}
-	defer os.RemoveAll(cfgDir)
-	golangciCfgPath := filepath.Join(cfgDir, golangciCfgName)
-	if err := os.WriteFile(golangciCfgPath, golangciCfgContents, 0o644); err != nil {
-		return nil, fmt.Errorf("error writing golangci-lint config file: %v", err)
-	}
-
-	var lintBuf bytes.Buffer
-	cmd := []string{"golangci-lint", "run", "-c", golangciCfgPath, "--out-format=json"}
-	cmd = append(cmd, dirs...)
-	err = runCommand(&lintBuf, false, cmd...)
-	if err != nil {
-		// golangci-lint will exit with 1 if any linters returned issues,
-		// but that doesn't mean it itself failed
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() != 1 {
-			return nil, err
-		}
-	}
-
-	var results lintResult
-	if err := json.Unmarshal(lintBuf.Bytes(), &results); err != nil {
-		return nil, fmt.Errorf("error decoding: %v", err)
-	}
-
-	return results.Issues, nil
-}
-
-type staticcheckIssue struct {
-	Code     string
-	Location staticcheckPosition
-	End      staticcheckPosition
-	Message  string
-}
-
-type staticcheckPosition struct {
-	File   string
-	Line   int
-	Column int
-}
-
-func staticcheckLint(dep string, pkgs usedPackages) ([]lintIssue, error) {
-	var dirs []string
-	for _, pkg := range pkgs {
-		if !pkg.Standard && pkg.Module.Path == dep {
-			dirs = append(dirs, pkg.Dir)
-		}
-	}
-
-	var lintBuf bytes.Buffer
-	cmd := []string{"staticcheck", "-checks=SA1*,SA2*,SA4*,SA5*,SA9*", "-f=json", "-tests=false"}
-	cmd = append(cmd, dirs...)
-	err := runCommand(&lintBuf, false, cmd...)
-	if err != nil {
-		// staticcheck will exit with 1 if any issues are found, but
-		// that doesn't mean it itself failed
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() != 1 {
-			return nil, err
-		}
-	}
-
-	var sIssues []staticcheckIssue
-	dec := json.NewDecoder(&lintBuf)
-	for dec.More() {
-		var issue staticcheckIssue
-		if err := dec.Decode(&issue); err != nil {
-			return nil, fmt.Errorf("error decoding: %v", err)
-		}
-		sIssues = append(sIssues, issue)
-	}
-
-	issues := make([]lintIssue, len(sIssues))
-	for i, sIssue := range sIssues {
-		issue := lintIssue{
-			FromLinter: "staticcheck " + sIssue.Code,
-			Text:       trimLinterMsg(sIssue.Message),
-			Pos: lintPosition{
-				Filename: sIssue.Location.File,
-				Offset:   sIssue.End.Column, // ?
-				Line:     sIssue.Location.Line,
-				Column:   sIssue.Location.Column,
-			},
-		}
-		issue.SourceLines, err = getSrcLines(sIssue)
-		if err != nil {
-			return nil, err
-		}
-		issues[i] = issue
-	}
-
-	return issues, nil
-}
-
-func trimLinterMsg(msg string) string {
-	msg = strings.TrimSpace(msg)
-	if msg[len(msg)-1] == '.' {
-		msg = msg[:len(msg)-1]
-	}
-	return msg
-}
-
-func getSrcLines(sIssue staticcheckIssue) ([]string, error) {
-	srcFile, err := os.Open(sIssue.Location.File)
-	if err != nil {
-		return nil, fmt.Errorf("error opening source file %s: %v", sIssue.Location.File, err)
-	}
-	defer srcFile.Close()
-	s := bufio.NewScanner(srcFile)
-
-	line := 1
-	srcLines := make([]string, 0, 1)
-	for s.Scan() {
-		if line == sIssue.Location.Line {
-			srcLines = append(srcLines, s.Text())
-		}
-		if line == sIssue.End.Line {
-			if sIssue.Location.Line != sIssue.End.Line {
-				srcLines = append(srcLines, s.Text())
-			}
-			break
-		}
-		if line > sIssue.Location.Line && line < sIssue.End.Line {
-			srcLines = append(srcLines, s.Text())
-		}
-		line++
-	}
-	if err := s.Err(); err != nil {
-		return nil, fmt.Errorf("error reading source file %s: %v", sIssue.Location.File, err)
-	}
-
-	return srcLines, nil
-}
-
-func issuesEqual(dep string, a, b lintIssue) bool {
-	if a.FromLinter != b.FromLinter || a.Text != b.Text {
-		return false
-	}
-	if a.Pos.Line != b.Pos.Line {
-		return false
-	}
-	if len(a.SourceLines) != len(b.SourceLines) {
-		return false
-	}
-
-	// compare paths after the module version
-	filenameA := getDepRelPath(dep, a.Pos.Filename)
-	filenameB := getDepRelPath(dep, b.Pos.Filename)
-	if filenameA != filenameB {
-		return false
-	}
-
-	// compare source code lines with leading and trailing whitespace
-	// removed; if only whitespace changed between old and new versions
-	// the line(s) are semantically the same
-	for i := range a.SourceLines {
-		srcLineA := strings.TrimSpace(a.SourceLines[i])
-		srcLineB := strings.TrimSpace(b.SourceLines[i])
-		if srcLineA != srcLineB {
-			return false
-		}
-	}
-
-	return true
-}
-
-func getDepRelPath(dep, path string) string {
-	depIdx := strings.Index(path, dep)
-	if depIdx == -1 {
-		log.Printf("could not find %s in path %s", dep, path)
-		return path
-	}
-	depVerIdx := depIdx + len(dep)
-	slashIdx := strings.Index(path[depVerIdx:], "/")
-	if slashIdx == -1 {
-		log.Printf("could not find slash in path %s", path[depVerIdx:])
-		return path
-	}
-
-	return path[depVerIdx+slashIdx:]
-}
-
-func printIssues(issues []lintIssue, versionStr string) {
+func printLinterIssues(issues []lintIssue, versionStr string) {
 	for _, issue := range issues {
 		filename := issue.Pos.Filename
 		idx := strings.Index(issue.Pos.Filename, versionStr)
@@ -535,45 +303,8 @@ func printIssues(issues []lintIssue, versionStr string) {
 	}
 }
 
-func runGoCommand(args ...string) error {
-	var writer io.Writer
-	if verbose {
-		writer = os.Stderr
+func printPkgIssues(issues []packageIssue) {
+	for _, issue := range issues {
+		fmt.Printf("%s imports %s\n\n", issue.srcPkg, issue.unwantedPkg)
 	}
-
-	env := make([]string, len(goEnvVars))
-	for _, envVar := range goEnvVars {
-		env = append(env, fmt.Sprintf("%s=%s", envVar, os.Getenv(envVar)))
-	}
-
-	return buildCommand(writer, true, env, args...).Run()
-}
-
-func runCommand(writer io.Writer, stderr bool, args ...string) error {
-	return buildCommand(writer, stderr, nil, args...).Run()
-}
-
-func buildCommand(writer io.Writer, stderr bool, env []string, args ...string) *exec.Cmd {
-	var cmd *exec.Cmd
-	if len(args) == 1 {
-		cmd = exec.Command(args[0])
-	} else {
-		cmd = exec.Command(args[0], args[1:]...)
-	}
-
-	cmd.Env = env
-	cmd.Stdout = writer
-	if stderr {
-		cmd.Stderr = writer
-	}
-
-	if verbose {
-		log.Printf("running command: %q", cmd)
-	}
-
-	return cmd
-}
-
-func makeVersionStr(dep, version string) string {
-	return dep + "@" + version
 }
