@@ -38,6 +38,9 @@ linters:
     - usestdlibvars
 
 linters-settings:
+  asasalint:
+    exclude:
+      - append
   errcheck:
     exclude-functions:
       # TODO: doesn't work?
