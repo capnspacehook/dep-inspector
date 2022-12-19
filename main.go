@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	_ "embed"
 	"encoding/json"
@@ -188,18 +189,18 @@ func lintDep(dep, oldVer, newVer string) error {
 		newIssues   []lintIssue
 	)
 
-	for _, issue := range oldVerResults.Issues {
-		idx := slices.IndexFunc(newVerResults.Issues, func(li lintIssue) bool {
+	for _, issue := range oldVerResults {
+		idx := slices.IndexFunc(newVerResults, func(li lintIssue) bool {
 			return issuesEqual(dep, li, issue)
 		})
 		if idx == -1 {
 			fixedIssues = append(fixedIssues, issue)
 			continue
 		}
-		staleIssues = append(staleIssues, newVerResults.Issues[idx])
+		staleIssues = append(staleIssues, newVerResults[idx])
 	}
-	for _, issue := range newVerResults.Issues {
-		idx := slices.IndexFunc(oldVerResults.Issues, func(li lintIssue) bool {
+	for _, issue := range newVerResults {
+		idx := slices.IndexFunc(oldVerResults, func(li lintIssue) bool {
 			return issuesEqual(dep, li, issue)
 		})
 		if idx != -1 {
@@ -236,7 +237,7 @@ type lintPosition struct {
 	Column   int
 }
 
-func lintDepVersion(dir, goModCache, dep, version string) (*lintResult, error) {
+func lintDepVersion(dir, goModCache, dep, version string) ([]lintIssue, error) {
 	// add dep to go.mod so linting it will work
 	versionStr := makeVersionStr(dep, version)
 	err := runGoCommand(dir, "go", "get", versionStr)
@@ -247,26 +248,20 @@ func lintDepVersion(dir, goModCache, dep, version string) (*lintResult, error) {
 	// TODO: replace uppercase chars c with '\!c'
 	depDir := filepath.Join(goModCache, versionStr)
 
-	log.Printf("linting %s", versionStr)
-
-	// lint dependency
-	var lintBuf bytes.Buffer
-	err = runCommand(&lintBuf, false, dir, "golangci-lint", "run", "-c", golangciCfgName, "--out-format=json", depDir+"/...")
+	log.Printf("linting %s with golangci-lint", versionStr)
+	golangciIssues, err := golangciLint(dir, depDir, versionStr)
 	if err != nil {
-		// golangci-lint will exit with 1 if any linters returned errors,
-		// but that doesn't mean it itself failed
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() != 1 {
-			return nil, fmt.Errorf("error linting %q: %v", versionStr, err)
-		}
+		return nil, fmt.Errorf("error linting %s with golangci-lint: %v", versionStr, err)
 	}
 
-	var results lintResult
-	if err := json.Unmarshal(lintBuf.Bytes(), &results); err != nil {
-		return nil, fmt.Errorf("error decoding results from linter: %v", err)
+	log.Printf("linting %s with staticcheck", versionStr)
+	staticcheckIssues, err := staticcheckLint(dir, depDir, versionStr)
+	if err != nil {
+		return nil, fmt.Errorf("error linting %s with golangci-lint: %v", versionStr, err)
 	}
 
-	slices.SortFunc(results.Issues, func(a, b lintIssue) bool {
+	issues := append(golangciIssues, staticcheckIssues...)
+	slices.SortFunc(issues, func(a, b lintIssue) bool {
 		if a.FromLinter != b.FromLinter {
 			return a.FromLinter < b.FromLinter
 		}
@@ -279,7 +274,116 @@ func lintDepVersion(dir, goModCache, dep, version string) (*lintResult, error) {
 		return a.Pos.Column < b.Pos.Column
 	})
 
-	return &results, nil
+	return issues, nil
+}
+
+func golangciLint(dir, depDir, versionStr string) ([]lintIssue, error) {
+	var lintBuf bytes.Buffer
+	err := runCommand(&lintBuf, false, dir, "golangci-lint", "run", "-c", golangciCfgName, "--out-format=json", depDir+"/...")
+	if err != nil {
+		// golangci-lint will exit with 1 if any linters returned issues,
+		// but that doesn't mean it itself failed
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() != 1 {
+			return nil, err
+		}
+	}
+
+	var results lintResult
+	if err := json.Unmarshal(lintBuf.Bytes(), &results); err != nil {
+		return nil, fmt.Errorf("error decoding results: %v", err)
+	}
+
+	return results.Issues, nil
+}
+
+type staticcheckIssue struct {
+	Code     string
+	Location staticcheckPosition
+	End      staticcheckPosition
+	Message  string
+}
+
+type staticcheckPosition struct {
+	File   string
+	Line   int
+	Column int
+}
+
+func staticcheckLint(dir, depDir, versionStr string) ([]lintIssue, error) {
+	var lintBuf bytes.Buffer
+	err := runCommand(&lintBuf, false, dir, "staticcheck", "-checks=SA1*,SA2*,SA4*,SA5*,SA9*", "-f=json", "-tests=false", depDir+"/...")
+	if err != nil {
+		// staticcheck will exit with 1 if any issues are found, but
+		// that doesn't mean it itself failed
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() != 1 {
+			return nil, err
+		}
+	}
+
+	var sIssues []staticcheckIssue
+	dec := json.NewDecoder(&lintBuf)
+	for dec.More() {
+		var issue staticcheckIssue
+		if err := dec.Decode(&issue); err != nil {
+			return nil, fmt.Errorf("error decoding results: %v", err)
+		}
+		sIssues = append(sIssues, issue)
+	}
+
+	issues := make([]lintIssue, len(sIssues))
+	for i, sIssue := range sIssues {
+		issue := lintIssue{
+			FromLinter: "staticcheck",
+			Text:       fmt.Sprintf("%s: %s", sIssue.Code, sIssue.Message),
+			Pos: lintPosition{
+				Filename: sIssue.Location.File,
+				Offset:   sIssue.End.Column, // ?
+				Line:     sIssue.Location.Line,
+				Column:   sIssue.Location.Column,
+			},
+		}
+		issue.SourceLines, err = getSrcLines(sIssue)
+		if err != nil {
+			return nil, err
+		}
+		issues[i] = issue
+	}
+
+	return issues, nil
+}
+
+func getSrcLines(sIssue staticcheckIssue) ([]string, error) {
+	srcFile, err := os.Open(sIssue.Location.File)
+	if err != nil {
+		return nil, fmt.Errorf("error opening source file %s: %v", sIssue.Location.File, err)
+	}
+	defer srcFile.Close()
+	s := bufio.NewScanner(srcFile)
+
+	line := 1
+	srcLines := make([]string, 0, 1)
+	for s.Scan() {
+		if line == sIssue.Location.Line {
+			srcLines = append(srcLines, s.Text())
+		}
+		if line == sIssue.End.Line {
+			if sIssue.Location.Line != sIssue.End.Line {
+				srcLines = append(srcLines, s.Text())
+			}
+			break
+		}
+		if line > sIssue.Location.Line && line < sIssue.End.Line {
+			srcLines = append(srcLines, s.Text())
+		}
+		line++
+	}
+	if err := s.Err(); err != nil {
+		return nil, fmt.Errorf("error reading source file %s: %v", sIssue.Location.File, err)
+	}
+
+	return srcLines, nil
 }
 
 func issuesEqual(dep string, a, b lintIssue) bool {
@@ -314,30 +418,30 @@ func issuesEqual(dep string, a, b lintIssue) bool {
 	return true
 }
 
-type listedPackage struct {
-	Name       string
-	ImportPath string
-	Dir        string
-	Standard   bool
-	Imports    []string
-	Deps       []string
-	Incomplete bool
-}
+// type listedPackage struct {
+// 	Name       string
+// 	ImportPath string
+// 	Dir        string
+// 	Standard   bool
+// 	Imports    []string
+// 	Deps       []string
+// 	Incomplete bool
+// }
 
-func listPackage(dir string, pkg string) (map[string]*listedPackage, error) {
-	var listBuf bytes.Buffer
+// func listPackage(dir string, pkg string) (map[string]*listedPackage, error) {
+// 	var listBuf bytes.Buffer
 
-	err := runCommand(&listBuf, false, dir, "go", "list", "-deps", "-json", pkg)
-	if err != nil {
-		return nil, fmt.Errorf("error listing package %q: %v", pkg, err)
-	}
+// 	err := runCommand(&listBuf, false, dir, "go", "list", "-deps", "-json", pkg)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("error listing package %q: %v", pkg, err)
+// 	}
 
-	dec := json.NewDecoder(&listBuf)
-	listedPkgs := make(map[string]*listedPackage)
-	for dec.More() {
-		dec.Decode()
-	}
-}
+// 	dec := json.NewDecoder(&listBuf)
+// 	listedPkgs := make(map[string]*listedPackage)
+// 	for dec.More() {
+// 		dec.Decode()
+// 	}
+// }
 
 func getDepRelPath(dep, path string) string {
 	depIdx := strings.Index(path, dep)
