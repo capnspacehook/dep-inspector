@@ -162,7 +162,7 @@ func mainRetCode() int {
 		fmt.Println("added unwanted packages:")
 		printPkgIssues(results.addedPkgs)
 	}
-	fmt.Printf("total:\nadded unwanted packages: %d\nstale unwanted packages: %d\nadded unwanted packages: %d\n",
+	fmt.Printf("total:\nremoved unwanted packages: %d\nstale unwanted packages:   %d\nadded unwanted packages:   %d\n",
 		len(results.removedPkgs),
 		len(results.stalePkgs),
 		len(results.addedPkgs),
@@ -312,6 +312,7 @@ func printPkgIssues(issues []packageIssue) {
 				fmt.Println(pkg)
 			}
 		}
+		fmt.Printf("calls: %v", issue.calls)
 		fmt.Println()
 	}
 }

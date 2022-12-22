@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/token"
 	"log"
 	"os"
 	"os/exec"
@@ -27,14 +28,7 @@ type lintIssue struct {
 	FromLinter  string
 	Text        string
 	SourceLines []string
-	Pos         lintPosition
-}
-
-type lintPosition struct {
-	Filename string
-	Offset   int
-	Line     int
-	Column   int
+	Pos         token.Position
 }
 
 func lintDepVersion(goModCache, dep, versionStr string, pkgs packagesInfo) ([]lintIssue, error) {
@@ -159,7 +153,7 @@ func staticcheckLint(dep string, dirs []string) ([]lintIssue, error) {
 		issue := lintIssue{
 			FromLinter: "staticcheck " + sIssue.Code,
 			Text:       trimLinterMsg(sIssue.Message),
-			Pos: lintPosition{
+			Pos: token.Position{
 				Filename: sIssue.Location.File,
 				Offset:   sIssue.End.Column, // ?
 				Line:     sIssue.Location.Line,
