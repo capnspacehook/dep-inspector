@@ -254,12 +254,24 @@ func findFuncCalls(fromImp string, pkg *packages.Package) ([]funcCall, error) {
 			if !ok {
 				return true
 			}
+
 			if pkgName.Imported().Path() != fromImp {
+				return true
+			}
+			specificFuncs, ok := unwantedFuncs[fromImp]
+			if ok && !slices.Contains(specificFuncs, selExpr.Sel.Name) {
+				return true
+			}
+			// if the last recorded function call is on the same line,
+			// skip this call as the previous call's source lines will
+			// cover it
+			pos := pkg.Fset.PositionFor(callExpr.Pos(), false)
+			if len(calls) > 0 && calls[len(calls)-1].position.Line == pos.Line {
 				return true
 			}
 
 			calls = append(calls, funcCall{
-				position: pkg.Fset.PositionFor(callExpr.Pos(), false),
+				position: pos,
 			})
 			return true
 		})
