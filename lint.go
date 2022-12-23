@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	_ "embed"
 	"encoding/json"
@@ -160,7 +159,11 @@ func staticcheckLint(dep string, dirs []string) ([]lintIssue, error) {
 				Column:   sIssue.Location.Column,
 			},
 		}
-		issue.SourceLines, err = getSrcLines(sIssue)
+		issue.SourceLines, err = getSrcLinesFromFile(
+			sIssue.Location.File,
+			sIssue.Location.Line,
+			sIssue.End.Line,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -178,33 +181,17 @@ func trimLinterMsg(msg string) string {
 	return msg
 }
 
-func getSrcLines(sIssue staticcheckIssue) ([]string, error) {
-	srcFile, err := os.Open(sIssue.Location.File)
+func getSrcLinesFromFile(path string, startLine, endLine int) ([]string, error) {
+	srcFile, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("error opening source file %s: %v", sIssue.Location.File, err)
+		return nil, fmt.Errorf("error opening source file: %v", err)
 	}
 	defer srcFile.Close()
-	s := bufio.NewScanner(srcFile)
+	l := newLineReader(srcFile)
 
-	line := 1
-	srcLines := make([]string, 0, 1)
-	for s.Scan() {
-		if line == sIssue.Location.Line {
-			srcLines = append(srcLines, s.Text())
-		}
-		if line == sIssue.End.Line {
-			if sIssue.Location.Line != sIssue.End.Line {
-				srcLines = append(srcLines, s.Text())
-			}
-			break
-		}
-		if line > sIssue.Location.Line && line < sIssue.End.Line {
-			srcLines = append(srcLines, s.Text())
-		}
-		line++
-	}
-	if err := s.Err(); err != nil {
-		return nil, fmt.Errorf("error reading source file %s: %v", sIssue.Location.File, err)
+	srcLines, err := getSrcLines(l, startLine, endLine)
+	if err != nil {
+		return nil, fmt.Errorf("error reading source file: %v", err)
 	}
 
 	return srcLines, nil

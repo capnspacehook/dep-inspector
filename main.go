@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 
@@ -121,6 +122,12 @@ func mainRetCode() int {
 		return 2
 	}
 
+	goModCache, err := getGoModCache()
+	if err != nil {
+		log.Println(err)
+		return 1
+	}
+
 	if flag.NArg() == 1 {
 		depVer := flag.Arg(0)
 		dep, ver, ok := strings.Cut(depVer, "@")
@@ -130,21 +137,21 @@ func mainRetCode() int {
 			return 2
 		}
 
-		lintIssues, pkgIssues, err := inspectDep(dep, ver)
+		lintIssues, pkgIssues, err := inspectDep(dep, ver, goModCache)
 		if err != nil {
 			log.Println(err)
 			return 1
 		}
 
-		printLinterIssues(lintIssues, depVer)
-		printPkgIssues(pkgIssues)
+		printLinterIssues(lintIssues, goModCache)
+		printPkgIssues(pkgIssues, goModCache)
 		return 0
 	}
 
 	dep := flag.Arg(0)
 	oldVer := flag.Arg(1)
 	newVer := flag.Arg(2)
-	results, err := inspectDepVersions(dep, oldVer, newVer)
+	results, err := inspectDepVersions(dep, oldVer, newVer, goModCache)
 	if err != nil {
 		log.Println(err)
 		return 1
@@ -153,15 +160,15 @@ func mainRetCode() int {
 	// print linter issues
 	if len(results.fixedIssues) > 0 {
 		fmt.Println("fixed issues:")
-		printLinterIssues(results.fixedIssues, makeVersionStr(dep, oldVer))
+		printLinterIssues(results.fixedIssues, goModCache)
 	}
 	if len(results.staleIssues) > 0 {
 		fmt.Println("stale issues:")
-		printLinterIssues(results.staleIssues, makeVersionStr(dep, newVer))
+		printLinterIssues(results.staleIssues, goModCache)
 	}
 	if len(results.newIssues) > 0 {
 		fmt.Println("new issues:")
-		printLinterIssues(results.newIssues, makeVersionStr(dep, newVer))
+		printLinterIssues(results.newIssues, goModCache)
 	}
 	fmt.Printf("total:\nfixed issues: %d\nstale issues: %d\nnew issues:   %d\n\n",
 		len(results.fixedIssues),
@@ -172,15 +179,15 @@ func mainRetCode() int {
 	// print package issues
 	if len(results.removedPkgs) > 0 {
 		fmt.Println("removed unwanted packages:")
-		printPkgIssues(results.removedPkgs)
+		printPkgIssues(results.removedPkgs, goModCache)
 	}
 	if len(results.stalePkgs) > 0 {
 		fmt.Println("stale unwanted packages:")
-		printPkgIssues(results.stalePkgs)
+		printPkgIssues(results.stalePkgs, goModCache)
 	}
 	if len(results.addedPkgs) > 0 {
 		fmt.Println("added unwanted packages:")
-		printPkgIssues(results.addedPkgs)
+		printPkgIssues(results.addedPkgs, goModCache)
 	}
 	fmt.Printf("total:\nremoved unwanted packages: %d\nstale unwanted packages:   %d\nadded unwanted packages:   %d\n",
 		len(results.removedPkgs),
@@ -191,13 +198,7 @@ func mainRetCode() int {
 	return 0
 }
 
-func inspectDep(dep, version string) ([]lintIssue, []packageIssue, error) {
-	// find GOMODCACHE
-	goModCache, err := getGoModCache()
-	if err != nil {
-		return nil, nil, err
-	}
-
+func inspectDep(dep, version, goModCache string) ([]lintIssue, []packageIssue, error) {
 	pkgs, err := setupDepVersion(makeVersionStr(dep, version))
 	if err != nil {
 		return nil, nil, err
@@ -225,12 +226,7 @@ type inspectResults struct {
 	addedPkgs   []packageIssue
 }
 
-func inspectDepVersions(dep, oldVer, newVer string) (*inspectResults, error) {
-	// find GOMODCACHE
-	goModCache, err := getGoModCache()
-	if err != nil {
-		return nil, err
-	}
+func inspectDepVersions(dep, oldVer, newVer, goModCache string) (*inspectResults, error) {
 	// inspect old version
 	oldVerStr := makeVersionStr(dep, oldVer)
 	oldPkgs, err := setupDepVersion(oldVerStr)
@@ -339,22 +335,16 @@ func processIssues[T any](oldVerIssues, newVerIssues []T, equal func(a, b T) boo
 	return fixedIssues, staleIssues, newIssues
 }
 
-func printLinterIssues(issues []lintIssue, versionStr string) {
+func printLinterIssues(issues []lintIssue, goModCache string) {
 	for _, issue := range issues {
-		filename := issue.Pos.Filename
-		idx := strings.Index(issue.Pos.Filename, versionStr)
-		if idx == -1 {
-			log.Printf("malformed filename: %q", filename)
-		} else {
-			filename = filename[idx:]
-		}
+		filename := trimFilename(issue.Pos.Filename, goModCache)
 		srcLines := strings.Join(issue.SourceLines, "\n")
 
 		fmt.Printf("(%s) %s: %s:%d:%d:\n%s\n\n", issue.FromLinter, issue.Text, filename, issue.Pos.Line, issue.Pos.Column, srcLines)
 	}
 }
 
-func printPkgIssues(issues []packageIssue) {
+func printPkgIssues(issues []packageIssue, goModCache string) {
 	for _, issue := range issues {
 		fmt.Printf("%s imports %s\n", issue.srcPkg, issue.unwantedPkg)
 		if len(issue.pkgChain) > 0 {
@@ -365,8 +355,15 @@ func printPkgIssues(issues []packageIssue) {
 		}
 		fmt.Println("calls:")
 		for _, call := range issue.calls {
-			fmt.Printf("%s\n", call.position.String())
+			posStr := trimFilename(call.position.String(), goModCache)
+			srcLines := strings.Join(call.sourceLines, "\n")
+
+			fmt.Printf("%s:\n%s\n\n", posStr, srcLines)
 		}
 		fmt.Println()
 	}
+}
+
+func trimFilename(path, goModCache string) string {
+	return strings.TrimPrefix(path, goModCache+string(filepath.Separator))
 }

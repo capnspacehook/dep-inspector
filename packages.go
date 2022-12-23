@@ -7,8 +7,10 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"os"
 	"strconv"
 
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 	"golang.org/x/tools/go/packages"
 )
@@ -32,6 +34,7 @@ var (
 			"Breakpoint",
 			"GC",
 			"GOMAXPROCS",
+			"KeepAlive",
 			"LockOSThread",
 			"MemProfile",
 			"MutexProfile",
@@ -98,8 +101,8 @@ type packageIssue struct {
 }
 
 type funcCall struct {
-	position token.Position
-	source   string
+	position    token.Position
+	sourceLines []string
 }
 
 func findUnwantedImports(dep string, pkgs packagesInfo) ([]packageIssue, error) {
@@ -113,20 +116,23 @@ func findUnwantedImports(dep string, pkgs packagesInfo) ([]packageIssue, error) 
 
 	// TODO: use this instead of 'go list'?
 	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedFiles | packages.NeedImports |
+		Mode: packages.NeedName | packages.NeedCompiledGoFiles | packages.NeedImports |
 			packages.NeedDeps | packages.NeedSyntax | packages.NeedTypes |
 			packages.NeedTypesInfo,
 	}
 	// TODO: make map of import path -> *packages.Package
 	// TODO: how does 'go list' know if a package is from stdlib?
-	// by the path to it's source code, if in GOROOT its stdlib
+	// by the path to it's source code, if in GOROOT it's stdlib
 	loadedPkgs, err := packages.Load(cfg, depPkgs...)
 	if err != nil {
 		return nil, fmt.Errorf("error loading packages: %v", err)
 	}
 
+	pkgMap := make(map[string]*packages.Package)
+	mapLoadedPkgs(loadedPkgs, pkgMap)
+
 	seen := make(map[string]struct{})
-	pkgIssues, err := searchPkgs(depPkgs, pkgs, loadedPkgs, nil, seen)
+	pkgIssues, err := searchPkgs(depPkgs, pkgs, pkgMap, nil, seen)
 	if err != nil {
 		return nil, fmt.Errorf("error searching for unwanted imports: %v", err)
 	}
@@ -134,7 +140,20 @@ func findUnwantedImports(dep string, pkgs packagesInfo) ([]packageIssue, error) 
 	return pkgIssues, nil
 }
 
-func searchPkgs(pkgs []string, pkgInfo packagesInfo, loadedPkgs []*packages.Package, stack []string, seen map[string]struct{}) ([]packageIssue, error) {
+type loadedPackages map[string]*packages.Package
+
+func mapLoadedPkgs(loadedPkgs []*packages.Package, pkgMap loadedPackages) {
+	for _, loadedPkg := range loadedPkgs {
+		if _, ok := pkgMap[loadedPkg.PkgPath]; ok {
+			continue
+		}
+
+		pkgMap[loadedPkg.PkgPath] = loadedPkg
+		mapLoadedPkgs(maps.Values(loadedPkg.Imports), pkgMap)
+	}
+}
+
+func searchPkgs(pkgs []string, pkgInfo packagesInfo, loadedPkgs loadedPackages, stack []string, seen map[string]struct{}) ([]packageIssue, error) {
 	var pkgIssues []packageIssue
 	for _, pkgPath := range pkgs {
 		if _, ok := seen[pkgPath]; ok {
@@ -150,27 +169,27 @@ func searchPkgs(pkgs []string, pkgInfo packagesInfo, loadedPkgs []*packages.Pack
 		seen[pkg.ImportPath] = struct{}{}
 
 		foundImps := findIn(pkg.Imports, unwantedPkgs)
-		for _, f := range foundImps {
+		for _, foundImp := range foundImps {
+			pkg, ok := loadedPkgs[pkgPath]
+			if !ok {
+				return nil, fmt.Errorf("could not find package %s", pkgPath)
+			}
+			calls, err := findFuncCalls(foundImp, pkg)
+			if err != nil {
+				return nil, fmt.Errorf("error finding function calls: %v", err)
+			}
+			if len(calls) == 0 {
+				continue
+			}
+
 			pkgIssue := packageIssue{
 				srcPkg:      pkgPath,
-				unwantedPkg: f,
+				unwantedPkg: foundImp,
 			}
 			if len(stack) > 0 {
 				pkgIssue.pkgChain = append(stack, pkgPath)
 			}
-
-			idx := slices.IndexFunc(loadedPkgs, func(p *packages.Package) bool {
-				return p.PkgPath == pkgPath
-			})
-			if idx == -1 {
-				return nil, fmt.Errorf("could not find package %s", pkgPath)
-			}
-			calls, err := findFuncCalls(loadedPkgs[idx])
-			if err != nil {
-				return nil, fmt.Errorf("error finding function calls: %v", err)
-			}
 			pkgIssue.calls = calls
-
 			pkgIssues = append(pkgIssues, pkgIssue)
 		}
 
@@ -199,16 +218,16 @@ func findIn(haystack, needles []string) []string {
 	return found
 }
 
-func findFuncCalls(pkg *packages.Package) ([]funcCall, error) {
-	var calls []funcCall
-	for _, file := range pkg.Syntax {
+func findFuncCalls(fromImp string, pkg *packages.Package) ([]funcCall, error) {
+	var callsInPkg []funcCall
+	for i, file := range pkg.Syntax {
 		var found bool
 		for _, imp := range file.Imports {
 			impPath, err := strconv.Unquote(imp.Path.Value)
 			if err != nil {
 				return nil, fmt.Errorf("error unquoting: %v", err)
 			}
-			if slices.Contains(unwantedPkgs, impPath) {
+			if impPath == fromImp {
 				found = true
 				break
 			}
@@ -217,6 +236,7 @@ func findFuncCalls(pkg *packages.Package) ([]funcCall, error) {
 			continue
 		}
 
+		var calls []funcCall
 		ast.Inspect(file, func(n ast.Node) bool {
 			callExpr, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -234,18 +254,42 @@ func findFuncCalls(pkg *packages.Package) ([]funcCall, error) {
 			if !ok {
 				return true
 			}
-
-			// log.Println(pkgName.Imported().Path())
-			if !slices.Contains(unwantedPkgs, pkgName.Imported().Path()) {
+			if pkgName.Imported().Path() != fromImp {
 				return true
 			}
 
 			calls = append(calls, funcCall{
-				position: pkg.Fset.Position(callExpr.Pos()),
+				position: pkg.Fset.PositionFor(callExpr.Pos(), false),
 			})
-
 			return true
 		})
+
+		// TODO: handle case when len(pkg.Syntax) != len(pkg.CompiledGoFiles)
+		c, err := getCallsSrcLines(pkg.CompiledGoFiles[i], calls)
+		if err != nil {
+			return nil, err
+		}
+		callsInPkg = append(callsInPkg, c...)
+	}
+
+	return callsInPkg, nil
+}
+
+func getCallsSrcLines(path string, calls []funcCall) ([]funcCall, error) {
+	srcFile, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("error opening source file: %v", err)
+	}
+	defer srcFile.Close()
+	l := newLineReader(srcFile)
+
+	for j, call := range calls {
+		src, err := getSrcLines(l, call.position.Line, call.position.Line)
+		if err != nil {
+			return nil, fmt.Errorf("error reading source file: %v", err)
+		}
+
+		calls[j].sourceLines = src
 	}
 
 	return calls, nil
