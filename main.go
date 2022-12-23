@@ -116,15 +116,35 @@ func mainRetCode() int {
 		return 0
 	}
 
-	if flag.NArg() != 3 {
+	if narg := flag.NArg(); narg != 1 && narg != 3 {
 		usage()
 		return 2
+	}
+
+	if flag.NArg() == 1 {
+		depVer := flag.Arg(0)
+		dep, ver, ok := strings.Cut(depVer, "@")
+		if !ok {
+			log.Println(`malformed version string: no "@" present`)
+			usage()
+			return 2
+		}
+
+		lintIssues, pkgIssues, err := inspectDep(dep, ver)
+		if err != nil {
+			log.Println(err)
+			return 1
+		}
+
+		printLinterIssues(lintIssues, depVer)
+		printPkgIssues(pkgIssues)
+		return 0
 	}
 
 	dep := flag.Arg(0)
 	oldVer := flag.Arg(1)
 	newVer := flag.Arg(2)
-	results, err := inspectDep(dep, oldVer, newVer)
+	results, err := inspectDepVersions(dep, oldVer, newVer)
 	if err != nil {
 		log.Println(err)
 		return 1
@@ -171,6 +191,30 @@ func mainRetCode() int {
 	return 0
 }
 
+func inspectDep(dep, version string) ([]lintIssue, []packageIssue, error) {
+	// find GOMODCACHE
+	goModCache, err := getGoModCache()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	pkgs, err := setupDepVersion(makeVersionStr(dep, version))
+	if err != nil {
+		return nil, nil, err
+	}
+	pkgIssues, err := findUnwantedImports(dep, pkgs)
+	if err != nil {
+		return nil, nil, err
+	}
+	versionStr := makeVersionStr(dep, version)
+	lintIssues, err := lintDepVersion(goModCache, dep, versionStr, pkgs)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return lintIssues, pkgIssues, err
+}
+
 type inspectResults struct {
 	fixedIssues []lintIssue
 	staleIssues []lintIssue
@@ -181,19 +225,12 @@ type inspectResults struct {
 	addedPkgs   []packageIssue
 }
 
-func inspectDep(dep, oldVer, newVer string) (*inspectResults, error) {
+func inspectDepVersions(dep, oldVer, newVer string) (*inspectResults, error) {
 	// find GOMODCACHE
-	var sb strings.Builder
-	err := runCommand(&sb, false, "go", "env", "GOMODCACHE")
+	goModCache, err := getGoModCache()
 	if err != nil {
-		return nil, fmt.Errorf("error getting GOMODCACHE: %v", err)
+		return nil, err
 	}
-	// 'go env' output always ends with a newline
-	if sb.Len() < 2 {
-		return nil, errors.New("GOMODCACHE is empty")
-	}
-	goModCache := sb.String()[:sb.Len()-1]
-
 	// inspect old version
 	oldVerStr := makeVersionStr(dep, oldVer)
 	oldPkgs, err := setupDepVersion(oldVerStr)
@@ -238,6 +275,20 @@ func inspectDep(dep, oldVer, newVer string) (*inspectResults, error) {
 		stalePkgs:   stalePkgs,
 		addedPkgs:   addedPkgs,
 	}, nil
+}
+
+func getGoModCache() (string, error) {
+	var sb strings.Builder
+	err := runCommand(&sb, false, "go", "env", "GOMODCACHE")
+	if err != nil {
+		return "", fmt.Errorf("error getting GOMODCACHE: %v", err)
+	}
+	// 'go env' output always ends with a newline
+	if sb.Len() < 2 {
+		return "", errors.New("GOMODCACHE is empty")
+	}
+
+	return sb.String()[:sb.Len()-1], nil
 }
 
 func setupDepVersion(versionStr string) (packagesInfo, error) {
@@ -312,7 +363,10 @@ func printPkgIssues(issues []packageIssue) {
 				fmt.Println(pkg)
 			}
 		}
-		fmt.Printf("calls: %v", issue.calls)
+		fmt.Println("calls:")
+		for _, call := range issue.calls {
+			fmt.Printf("%s\n", call.position.String())
+		}
 		fmt.Println()
 	}
 }

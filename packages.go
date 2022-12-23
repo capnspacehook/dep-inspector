@@ -7,7 +7,6 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
-	"log"
 	"strconv"
 
 	"golang.org/x/exp/slices"
@@ -236,7 +235,7 @@ func findFuncCalls(pkg *packages.Package) ([]funcCall, error) {
 				return true
 			}
 
-			log.Println(pkgName.Imported().Path())
+			// log.Println(pkgName.Imported().Path())
 			if !slices.Contains(unwantedPkgs, pkgName.Imported().Path()) {
 				return true
 			}
