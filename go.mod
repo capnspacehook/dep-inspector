@@ -6,6 +6,6 @@ require golang.org/x/exp v0.0.0-20221126150942-6ab00d035af9
 
 require (
 	golang.org/x/mod v0.7.0 // indirect
-	golang.org/x/sys v0.3.0 // indirect
-	golang.org/x/tools v0.4.0
+	golang.org/x/sys v0.4.0 // indirect
+	golang.org/x/tools v0.5.0
 )
