@@ -16,7 +16,7 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-//go:embed .golangci-deps.yml
+//go:embed configs/golangci-lint/golangci.yml
 var golangciCfgContents []byte
 
 type golangciResult struct {
@@ -30,7 +30,7 @@ type lintIssue struct {
 	Pos         token.Position
 }
 
-func lintDepVersion(goModCache, dep, versionStr string, pkgs packagesInfo) ([]lintIssue, error) {
+func lintDepVersion(dep, versionStr string, pkgs packagesInfo) ([]lintIssue, error) {
 	var dirs []string
 	for _, pkg := range pkgs {
 		if !pkg.Standard && pkg.Module.Path == dep {
@@ -89,10 +89,10 @@ func golangciLint(dep string, dirs []string) ([]lintIssue, error) {
 		return nil, fmt.Errorf("error writing golangci-lint config file: %v", err)
 	}
 
-	var lintBuf bytes.Buffer
+	var output bytes.Buffer
 	cmd := []string{"golangci-lint", "run", "-c", golangciCfgPath, "--out-format=json"}
 	cmd = append(cmd, dirs...)
-	err = runCommand(&lintBuf, false, cmd...)
+	err = runCommand(&output, false, cmd...)
 	if err != nil {
 		// golangci-lint will exit with 1 if any linters returned issues,
 		// but that doesn't mean it itself failed
@@ -103,7 +103,7 @@ func golangciLint(dep string, dirs []string) ([]lintIssue, error) {
 	}
 
 	var results golangciResult
-	if err := json.Unmarshal(lintBuf.Bytes(), &results); err != nil {
+	if err := json.Unmarshal(output.Bytes(), &results); err != nil {
 		return nil, fmt.Errorf("error decoding: %v", err)
 	}
 

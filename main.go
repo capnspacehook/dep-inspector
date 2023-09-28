@@ -70,9 +70,6 @@ TODO:
 
 - inspect changed indirect deps as well
 
-- check if CGO is used
-- check if unsafe is imported
-  - details on linkname directives
 - check if embed is imported
   - check size diff of embedded files
   - try and determine type of file
@@ -114,25 +111,44 @@ func mainRetCode() int {
 			return 2
 		}
 
-		lintIssues, pkgIssues, err := inspectDep(dep, ver, goModCache)
+		pkgIssues, lintIssues, err := inspectDep(dep, ver)
 		if err != nil {
 			log.Println(err)
 			return 1
 		}
 
+		printCaps(pkgIssues, goModCache)
 		printLinterIssues(lintIssues, goModCache)
-		printPkgIssues(pkgIssues, goModCache)
 		return 0
 	}
 
 	dep := flag.Arg(0)
 	oldVer := flag.Arg(1)
 	newVer := flag.Arg(2)
-	results, err := inspectDepVersions(dep, oldVer, newVer, goModCache)
+	results, err := inspectDepVersions(dep, oldVer, newVer)
 	if err != nil {
 		log.Println(err)
 		return 1
 	}
+
+	// print package issues
+	if len(results.removedCaps) > 0 {
+		fmt.Println("removed capabilities:")
+		printCaps(results.removedCaps, goModCache)
+	}
+	if len(results.staleCaps) > 0 {
+		fmt.Println("stale capabilities:")
+		printCaps(results.staleCaps, goModCache)
+	}
+	if len(results.addedCaps) > 0 {
+		fmt.Println("added capabilities:")
+		printCaps(results.addedCaps, goModCache)
+	}
+	fmt.Printf("total:\nremoved capabilities: %d\nstale capabilities:   %d\nadded capabilities:   %d\n",
+		len(results.removedCaps),
+		len(results.staleCaps),
+		len(results.addedCaps),
+	)
 
 	// print linter issues
 	if len(results.fixedIssues) > 0 {
@@ -153,44 +169,25 @@ func mainRetCode() int {
 		len(results.newIssues),
 	)
 
-	// print package issues
-	if len(results.removedPkgs) > 0 {
-		fmt.Println("removed unwanted packages:")
-		printPkgIssues(results.removedPkgs, goModCache)
-	}
-	if len(results.stalePkgs) > 0 {
-		fmt.Println("stale unwanted packages:")
-		printPkgIssues(results.stalePkgs, goModCache)
-	}
-	if len(results.addedPkgs) > 0 {
-		fmt.Println("added unwanted packages:")
-		printPkgIssues(results.addedPkgs, goModCache)
-	}
-	fmt.Printf("total:\nremoved unwanted packages: %d\nstale unwanted packages:   %d\nadded unwanted packages:   %d\n",
-		len(results.removedPkgs),
-		len(results.stalePkgs),
-		len(results.addedPkgs),
-	)
-
 	return 0
 }
 
-func inspectDep(dep, version, goModCache string) ([]lintIssue, []packageIssue, error) {
-	pkgs, err := setupDepVersion(makeVersionStr(dep, version))
-	if err != nil {
-		return nil, nil, err
-	}
-	pkgIssues, err := findUnwantedImports(dep, pkgs)
-	if err != nil {
-		return nil, nil, err
-	}
+func inspectDep(dep, version string) ([]capability, []lintIssue, error) {
 	versionStr := makeVersionStr(dep, version)
-	lintIssues, err := lintDepVersion(goModCache, dep, versionStr, pkgs)
+	pkgs, err := setupDepVersion(versionStr)
+	if err != nil {
+		return nil, nil, err
+	}
+	caps, err := findCapabilities(dep, versionStr, pkgs)
+	if err != nil {
+		return nil, nil, err
+	}
+	lintIssues, err := lintDepVersion(dep, versionStr, pkgs)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return lintIssues, pkgIssues, err
+	return caps, lintIssues, err
 }
 
 type inspectResults struct {
@@ -198,55 +195,37 @@ type inspectResults struct {
 	staleIssues []lintIssue
 	newIssues   []lintIssue
 
-	removedPkgs []packageIssue
-	stalePkgs   []packageIssue
-	addedPkgs   []packageIssue
+	removedCaps []capability
+	staleCaps   []capability
+	addedCaps   []capability
 }
 
-func inspectDepVersions(dep, oldVer, newVer, goModCache string) (*inspectResults, error) {
+func inspectDepVersions(dep, oldVer, newVer string) (*inspectResults, error) {
 	// inspect old version
-	oldVerStr := makeVersionStr(dep, oldVer)
-	oldPkgs, err := setupDepVersion(oldVerStr)
-	if err != nil {
-		return nil, err
-	}
-	oldPkgIssues, err := findUnwantedImports(dep, oldPkgs)
-	if err != nil {
-		return nil, err
-	}
-	oldLintIssues, err := lintDepVersion(goModCache, dep, oldVerStr, oldPkgs)
+	oldCapIssues, oldLintIssues, err := inspectDep(dep, oldVer)
 	if err != nil {
 		return nil, err
 	}
 
 	// inspect new version
-	newVerStr := makeVersionStr(dep, newVer)
-	newPkgs, err := setupDepVersion(newVerStr)
-	if err != nil {
-		return nil, err
-	}
-	newPkgIssues, err := findUnwantedImports(dep, newPkgs)
-	if err != nil {
-		return nil, err
-	}
-	newLintIssues, err := lintDepVersion(goModCache, dep, newVerStr, newPkgs)
+	newCaps, newLintIssues, err := inspectDep(dep, oldVer)
 	if err != nil {
 		return nil, err
 	}
 
-	// process linter and package issues
-	fixedIssues, staleIssues, newIssues := processIssues(oldLintIssues, newLintIssues, func(a, b lintIssue) bool {
+	// process linter issues and capabilities
+	fixedIssues, staleIssues, newIssues := processFindings(oldLintIssues, newLintIssues, func(a, b lintIssue) bool {
 		return issuesEqual(dep, a, b)
 	})
-	removedPkgs, stalePkgs, addedPkgs := processIssues(oldPkgIssues, newPkgIssues, pkgIssuesEqual)
+	removedCaps, staleCaps, addedCaps := processFindings(oldCapIssues, newCaps, capsEqual)
 
 	return &inspectResults{
 		fixedIssues: fixedIssues,
 		staleIssues: staleIssues,
 		newIssues:   newIssues,
-		removedPkgs: removedPkgs,
-		stalePkgs:   stalePkgs,
-		addedPkgs:   addedPkgs,
+		removedCaps: removedCaps,
+		staleCaps:   staleCaps,
+		addedCaps:   addedCaps,
 	}, nil
 }
 
@@ -283,25 +262,25 @@ func setupDepVersion(versionStr string) (packagesInfo, error) {
 	return pkgs, nil
 }
 
-func processIssues[T any](oldVerIssues, newVerIssues []T, equal func(a, b T) bool) ([]T, []T, []T) {
+func processFindings[T any](oldVerFindings, newVerFindings []T, equal func(a, b T) bool) ([]T, []T, []T) {
 	var (
 		fixedIssues []T
 		staleIssues []T
 		newIssues   []T
 	)
 
-	for _, issue := range oldVerIssues {
-		idx := slices.IndexFunc(newVerIssues, func(issue2 T) bool {
+	for _, issue := range oldVerFindings {
+		idx := slices.IndexFunc(newVerFindings, func(issue2 T) bool {
 			return equal(issue, issue2)
 		})
 		if idx == -1 {
 			fixedIssues = append(fixedIssues, issue)
 		} else {
-			staleIssues = append(staleIssues, newVerIssues[idx])
+			staleIssues = append(staleIssues, newVerFindings[idx])
 		}
 	}
-	for _, issue := range newVerIssues {
-		idx := slices.IndexFunc(oldVerIssues, func(issue2 T) bool {
+	for _, issue := range newVerFindings {
+		idx := slices.IndexFunc(oldVerFindings, func(issue2 T) bool {
 			return equal(issue, issue2)
 		})
 		if idx == -1 {
@@ -321,23 +300,28 @@ func printLinterIssues(issues []lintIssue, goModCache string) {
 	}
 }
 
-func printPkgIssues(issues []packageIssue, goModCache string) {
-	for _, issue := range issues {
-		fmt.Printf("%s imports %s\n", issue.srcPkg, issue.unwantedPkg)
-		if len(issue.pkgChain) > 0 {
-			fmt.Println("import chain:")
-			for _, pkg := range issue.pkgChain {
-				fmt.Println(pkg)
+func printCaps(caps []capability, goModCache string) {
+	for _, cap := range caps {
+		fmt.Printf("%s: %s\n", cap.Capability, cap.CapabilityType)
+		for i, call := range cap.Path {
+			if i == 0 {
+				fmt.Println(call.Name)
+				continue
 			}
-		}
-		fmt.Println("calls:")
-		for _, call := range issue.calls {
-			posStr := trimFilename(call.position.String(), goModCache)
-			srcLines := strings.Join(call.sourceLines, "\n")
 
-			fmt.Printf("%s:\n%s\n\n", posStr, srcLines)
+			if call.Site.Filename != "" {
+				fmt.Printf("  %s %s:%s:%s\n",
+					call.Name,
+					call.Site.Filename,
+					call.Site.Line,
+					call.Site.Column,
+				)
+				continue
+			}
+			fmt.Printf("  %s\n", call.Name)
 		}
-		fmt.Println()
+
+		fmt.Print("\n\n")
 	}
 }
 
