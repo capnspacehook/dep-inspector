@@ -8,9 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
-
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -178,7 +177,7 @@ func inspectDep(dep, version string) ([]capability, []lintIssue, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	caps, err := findCapabilities(dep, versionStr, pkgs)
+	caps, err := findCapabilities(dep, versionStr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -254,7 +253,7 @@ func setupDepVersion(versionStr string) (packagesInfo, error) {
 		return nil, fmt.Errorf("error tidying modules: %v", err)
 	}
 
-	pkgs, err := listPackages()
+	pkgs, err := listPackages(true)
 	if err != nil {
 		return nil, err
 	}

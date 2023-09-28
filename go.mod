@@ -1,11 +1,7 @@
 module github.com/capnspacehook/dep-inspector
 
-go 1.19
+go 1.21.1
 
-require golang.org/x/exp v0.0.0-20221126150942-6ab00d035af9
+require golang.org/x/exp v0.0.0-20230905200255-921286631fa9
 
-require (
-	golang.org/x/mod v0.7.0 // indirect
-	golang.org/x/sys v0.4.0 // indirect
-	golang.org/x/tools v0.5.0
-)
+require golang.org/x/mod v0.12.0

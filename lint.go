@@ -11,9 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
-
-	"golang.org/x/exp/slices"
 )
 
 //go:embed configs/golangci-lint/golangci.yml
@@ -52,17 +51,26 @@ func lintDepVersion(dep, versionStr string, pkgs packagesInfo) ([]lintIssue, err
 
 	// sort issues by linter and file
 	issues := append(golangciIssues, staticcheckIssues...)
-	slices.SortFunc(issues, func(a, b lintIssue) bool {
+	slices.SortFunc(issues, func(a, b lintIssue) int {
 		if a.FromLinter != b.FromLinter {
-			return a.FromLinter < b.FromLinter
+			return strings.Compare(a.FromLinter, b.FromLinter)
 		}
 		if a.Pos.Filename != b.Pos.Filename {
-			return a.Pos.Filename < b.Pos.Filename
+			return strings.Compare(a.Pos.Filename, b.Pos.Filename)
 		}
 		if a.Pos.Line != b.Pos.Line {
-			return a.Pos.Line < b.Pos.Line
+			if a.Pos.Line < b.Pos.Line {
+				return -1
+			}
+			return 1
 		}
-		return a.Pos.Column < b.Pos.Column
+		if a.Pos.Column != b.Pos.Column {
+			if a.Pos.Column < b.Pos.Column {
+				return -1
+			}
+			return 1
+		}
+		return 0
 	})
 	// make leading whitespace of source code lines uniform
 	for i := range issues {

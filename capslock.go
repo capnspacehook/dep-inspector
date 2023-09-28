@@ -31,23 +31,16 @@ type callSite struct {
 	Column   string
 }
 
-func findCapabilities(dep, versionStr string, pkgs packagesInfo) ([]capability, error) {
-	var seenPkg bool
-	var depPkgs strings.Builder
-	for importPath := range pkgs {
-		if strings.HasPrefix(importPath, dep) {
-			if seenPkg {
-				depPkgs.WriteRune(',')
-			}
-			seenPkg = true
-			depPkgs.WriteString(importPath)
-		}
+func findCapabilities(dep, versionStr string) ([]capability, error) {
+	depPkgs, err := listImportedPackages(dep)
+	if err != nil {
+		return nil, err
 	}
 
 	log.Printf("finding capabilities of %s with capslock", versionStr)
 	var output bytes.Buffer
-	cmd := []string{"capslock", "-packages", depPkgs.String(), "-output=json"}
-	err := runCommand(&output, false, cmd...)
+	cmd := []string{"capslock", "-packages", strings.Join(depPkgs, ","), "-output=json"}
+	err = runCommand(&output, false, cmd...)
 	if err != nil {
 		return nil, err
 	}
