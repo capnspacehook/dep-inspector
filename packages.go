@@ -2,60 +2,32 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 	"golang.org/x/mod/modfile"
+	"golang.org/x/tools/go/packages"
 )
 
-type packagesInfo map[string]*listedPackage
+type loadedPackages map[string]*packages.Package
 
-type listedPackage struct {
-	Dir        string
-	ImportPath string
-	Name       string
-	Module     listedModule
-	Standard   bool
-	Imports    []string
-	Deps       []string
-	Incomplete bool
-}
-
-type listedModule struct {
-	Path    string
-	Version string
-}
-
-func listPackages(deps bool, pkgs ...string) (packagesInfo, error) {
-	var output bytes.Buffer
-	cmd := []string{"go", "list", "-json"}
-	if deps {
-		cmd = append(cmd, "-deps")
-	}
-	cmd = append(cmd, pkgs...)
-	err := runCommand(&output, false, cmd...)
+func listPackages(modName string) (loadedPackages, error) {
+	mode := packages.NeedName | packages.NeedFiles | packages.NeedImports | packages.NeedDeps | packages.NeedModule | packages.NeedEmbedFiles
+	cfg := &packages.Config{Mode: mode}
+	pkgs, err := packages.Load(cfg, modName+"/...")
 	if err != nil {
-		return nil, fmt.Errorf("error listing dependencies: %v", err)
+		return nil, fmt.Errorf("loading packages: %w", err)
 	}
+	loadedPkgs := make(loadedPackages)
+	mapLoadedPkgs(pkgs, loadedPkgs)
 
-	dec := json.NewDecoder(&output)
-	listedPkgs := make(packagesInfo)
-	for dec.More() {
-		var pkg listedPackage
-		if err := dec.Decode(&pkg); err != nil {
-			return nil, fmt.Errorf("error decoding: %v", err)
-		}
-		listedPkgs[pkg.ImportPath] = &pkg
-	}
-
-	return listedPkgs, nil
+	return loadedPkgs, nil
 }
 
-// TODO: use golang.org/x/tools/go/packages for a speedup
-func listImportedPackages(dep string) ([]string, error) {
+func parseGoMod() (*modfile.File, error) {
 	var output bytes.Buffer
 	err := runCommand(&output, false, "go", "env", "GOMOD")
 	if err != nil {
@@ -71,35 +43,55 @@ func listImportedPackages(dep string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error parsing go.mod: %w", err)
 	}
-	modName := modFile.Module.Mod.Path
 
-	pkgs, err := listPackages(true, modName+"/...")
-	if err != nil {
-		return nil, err
+	return modFile, err
+}
+
+func trimNewline(s string) string {
+	if len(s) != 0 && s[len(s)-1] == '\n' {
+		return s[:len(s)-1]
 	}
-	imports := make(map[string][]string)
+	return s
+}
+
+func mapLoadedPkgs(pkgs []*packages.Package, loadedPkgs loadedPackages) {
 	for _, pkg := range pkgs {
-		if !strings.HasPrefix(pkg.ImportPath, modName) {
+		if _, ok := loadedPkgs[pkg.PkgPath]; ok {
+			continue
+		}
+
+		// we only need one file path to figure out the dir they're in
+		pkg.GoFiles = pkg.GoFiles[:1]
+		loadedPkgs[pkg.PkgPath] = pkg
+		mapLoadedPkgs(maps.Values(pkg.Imports), loadedPkgs)
+	}
+}
+
+func listImportedPackages(dep string, modName string, pkgs loadedPackages) ([]string, error) {
+	pkgImports := make(map[string][]string)
+
+	for _, pkg := range pkgs {
+		if !strings.HasPrefix(pkg.PkgPath, modName) {
 			continue
 		}
 
 		for _, imp := range pkg.Imports {
-			if !strings.HasPrefix(imp, dep) {
+			if !strings.HasPrefix(imp.PkgPath, dep) {
 				continue
 			}
 
-			importedPkg, ok := pkgs[imp]
+			importedPkg, ok := pkgs[imp.PkgPath]
 			if !ok {
 				return nil, fmt.Errorf("couldn't find package %s", imp)
 			}
-			imports[importedPkg.ImportPath] = importedPkg.Imports
+			pkgImports[importedPkg.PkgPath] = maps.Keys(importedPkg.Imports)
 		}
 	}
 
-	importsToCheck := make([]string, 0, len(imports))
-	for pkgPath := range imports {
+	importsToCheck := make([]string, 0, len(pkgImports))
+	for pkgPath := range pkgImports {
 		addImport := true
-		for _, imports := range imports {
+		for _, imports := range pkgImports {
 			if slices.Contains(imports, pkgPath) {
 				addImport = false
 				break
@@ -111,11 +103,4 @@ func listImportedPackages(dep string) ([]string, error) {
 	}
 
 	return importsToCheck, nil
-}
-
-func trimNewline(s string) string {
-	if len(s) != 0 && s[len(s)-1] == '\n' {
-		return s[:len(s)-1]
-	}
-	return s
 }

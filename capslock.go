@@ -31,8 +31,8 @@ type callSite struct {
 	Column   string
 }
 
-func findCapabilities(dep, versionStr string) ([]capability, error) {
-	depPkgs, err := listImportedPackages(dep)
+func findCapabilities(dep, versionStr string, modName string, pkgs loadedPackages) ([]capability, error) {
+	depPkgs, err := listImportedPackages(dep, modName, pkgs)
 	if err != nil {
 		return nil, err
 	}

@@ -15,6 +15,8 @@ import (
 	"strings"
 )
 
+const golangciCfgName = ".golangci.yml"
+
 //go:embed configs/golangci-lint/golangci.yml
 var golangciCfgContents []byte
 
@@ -29,11 +31,16 @@ type lintIssue struct {
 	Pos         token.Position
 }
 
-func lintDepVersion(dep, versionStr string, pkgs packagesInfo) ([]lintIssue, error) {
+func lintDepVersion(dep, versionStr string, modName string, pkgs loadedPackages) ([]lintIssue, error) {
 	var dirs []string
 	for _, pkg := range pkgs {
-		if !pkg.Standard && pkg.Module.Path == dep {
-			dirs = append(dirs, pkg.Dir)
+		if pkg.Module == nil || !strings.HasPrefix(pkg.Module.Path, dep) {
+			continue
+		}
+
+		dir := filepath.Dir(pkg.GoFiles[0])
+		if !slices.Contains(dirs, dir) {
+			dirs = append(dirs, dir)
 		}
 	}
 
@@ -87,7 +94,7 @@ func lintDepVersion(dep, versionStr string, pkgs packagesInfo) ([]lintIssue, err
 func golangciLint(dep string, dirs []string) ([]lintIssue, error) {
 	// write embedded golangci-lint config to a temporary file to it can
 	// be used later
-	cfgDir, err := os.MkdirTemp("", modName)
+	cfgDir, err := os.MkdirTemp("", tempPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("error creating temporary file: %v", err)
 	}

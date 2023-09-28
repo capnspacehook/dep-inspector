@@ -15,8 +15,7 @@ import (
 const (
 	projectName = "Dep Inspector"
 
-	modName         = "dep-inspector"
-	golangciCfgName = ".golangci.yml"
+	tempPrefix = "dep-inspector"
 )
 
 var (
@@ -105,6 +104,7 @@ func mainRetCode() int {
 		depVer := flag.Arg(0)
 		dep, ver, ok := strings.Cut(depVer, "@")
 		if !ok {
+			// TODO: support not passing version and just using what's in go.mod
 			log.Println(`malformed version string: no "@" present`)
 			usage()
 			return 2
@@ -173,15 +173,25 @@ func mainRetCode() int {
 
 func inspectDep(dep, version string) ([]capability, []lintIssue, error) {
 	versionStr := makeVersionStr(dep, version)
-	pkgs, err := setupDepVersion(versionStr)
+	if err := setupDepVersion(versionStr); err != nil {
+		return nil, nil, err
+	}
+
+	modFile, err := parseGoMod()
 	if err != nil {
 		return nil, nil, err
 	}
-	caps, err := findCapabilities(dep, versionStr)
+	modName := modFile.Module.Mod.Path
+	pkgs, err := listPackages(modName)
 	if err != nil {
 		return nil, nil, err
 	}
-	lintIssues, err := lintDepVersion(dep, versionStr, pkgs)
+
+	caps, err := findCapabilities(dep, versionStr, modName, pkgs)
+	if err != nil {
+		return nil, nil, err
+	}
+	lintIssues, err := lintDepVersion(dep, versionStr, modName, pkgs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -242,23 +252,18 @@ func getGoModCache() (string, error) {
 	return sb.String()[:sb.Len()-1], nil
 }
 
-func setupDepVersion(versionStr string) (packagesInfo, error) {
+func setupDepVersion(versionStr string) error {
 	// add dep to go.mod so linting it will work
 	err := runGoCommand("go", "get", versionStr)
 	if err != nil {
-		return nil, fmt.Errorf("error downloading %q: %v", versionStr, err)
+		return fmt.Errorf("error downloading %q: %v", versionStr, err)
 	}
 	err = runGoCommand("go", "mod", "tidy")
 	if err != nil {
-		return nil, fmt.Errorf("error tidying modules: %v", err)
+		return fmt.Errorf("error tidying modules: %v", err)
 	}
 
-	pkgs, err := listPackages(true)
-	if err != nil {
-		return nil, err
-	}
-
-	return pkgs, nil
+	return nil
 }
 
 func processFindings[T any](oldVerFindings, newVerFindings []T, equal func(a, b T) bool) ([]T, []T, []T) {
