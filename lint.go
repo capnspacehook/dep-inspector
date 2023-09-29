@@ -31,9 +31,18 @@ type lintIssue struct {
 	Pos         token.Position
 }
 
-func lintDepVersion(dep, versionStr string, pkgs loadedPackages) ([]lintIssue, error) {
+func lintDepVersion(allPkgs bool, dep, versionStr string, pkgs loadedPackages) ([]lintIssue, error) {
 	var dirs []string
 	for _, pkg := range pkgs {
+		if allPkgs {
+			if pkg.Module == nil || pkg.Module.Path != dep {
+				continue
+			}
+			dir := filepath.Dir(pkg.GoFiles[0]) + string(filepath.Separator) + "..."
+			dirs = []string{dir}
+			break
+		}
+
 		if pkg.Module == nil || !strings.HasPrefix(pkg.Module.Path, dep) {
 			continue
 		}

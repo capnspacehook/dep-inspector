@@ -39,10 +39,14 @@ type callSite struct {
 	Column   string
 }
 
-func findCapabilities(dep, versionStr string, modName string, pkgs loadedPackages) ([]capability, error) {
-	depPkgs, err := listImportedPackages(dep, modName, pkgs)
-	if err != nil {
-		return nil, err
+func findCapabilities(allPkgs bool, dep, versionStr string, modName string, pkgs loadedPackages) ([]capability, error) {
+	depPkgs := []string{dep + "/..."}
+	var err error
+	if !allPkgs {
+		depPkgs, err = listImportedPackages(dep, modName, pkgs)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// write embedded capability maps to a temporary file to it can

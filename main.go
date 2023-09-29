@@ -19,6 +19,7 @@ const (
 )
 
 var (
+	allPkgs      bool
 	logPath      string
 	verbose      bool
 	printVersion bool
@@ -54,6 +55,7 @@ func init() {
 	// - merge golangci-lint config
 	// - specify staticcheck checks
 	// - build tags
+	flag.BoolVar(&allPkgs, "a", false, "inspect all packages of the dependency, not just those that are used")
 	flag.StringVar(&logPath, "l", "stdout", "path to log to")
 	flag.BoolVar(&verbose, "v", false, "print commands being run and verbose information")
 	flag.BoolVar(&printVersion, "version", false, "print version and build information and exit")
@@ -110,7 +112,13 @@ func mainRetCode() int {
 			return 2
 		}
 
-		pkgIssues, lintIssues, err := inspectDep(dep, ver)
+		modFile, err := parseGoMod()
+		if err != nil {
+			log.Println(err)
+			return 1
+		}
+		modName := modFile.Module.Mod.Path
+		pkgIssues, lintIssues, err := inspectDep(allPkgs, modName, dep, ver)
 		if err != nil {
 			log.Println(err)
 			return 1
@@ -124,7 +132,7 @@ func mainRetCode() int {
 	dep := flag.Arg(0)
 	oldVer := flag.Arg(1)
 	newVer := flag.Arg(2)
-	results, err := inspectDepVersions(dep, oldVer, newVer)
+	results, err := inspectDepVersions(allPkgs, dep, oldVer, newVer)
 	if err != nil {
 		log.Println(err)
 		return 1
@@ -171,27 +179,22 @@ func mainRetCode() int {
 	return 0
 }
 
-func inspectDep(dep, version string) ([]capability, []lintIssue, error) {
+func inspectDep(allPkgs bool, modName, dep, version string) ([]capability, []lintIssue, error) {
 	versionStr := makeVersionStr(dep, version)
 	if err := setupDepVersion(versionStr); err != nil {
 		return nil, nil, fmt.Errorf("setting up dependency: %w", err)
 	}
 
-	modFile, err := parseGoMod()
-	if err != nil {
-		return nil, nil, err
-	}
-	modName := modFile.Module.Mod.Path
 	pkgs, err := listPackages(modName)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	caps, err := findCapabilities(dep, versionStr, modName, pkgs)
+	caps, err := findCapabilities(allPkgs, dep, versionStr, modName, pkgs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("finding capabilities of dependency: %w", err)
 	}
-	lintIssues, err := lintDepVersion(dep, versionStr, pkgs)
+	lintIssues, err := lintDepVersion(allPkgs, dep, versionStr, pkgs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("linting dependency: %w", err)
 	}
@@ -209,15 +212,21 @@ type inspectResults struct {
 	addedCaps   []capability
 }
 
-func inspectDepVersions(dep, oldVer, newVer string) (*inspectResults, error) {
+func inspectDepVersions(allPkgs bool, dep, oldVer, newVer string) (*inspectResults, error) {
+	modFile, err := parseGoMod()
+	if err != nil {
+		return nil, err
+	}
+	modName := modFile.Module.Mod.Path
+
 	// inspect old version
-	oldCaps, oldLintIssues, err := inspectDep(dep, oldVer)
+	oldCaps, oldLintIssues, err := inspectDep(allPkgs, modName, dep, oldVer)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting %s: %w", makeVersionStr(dep, oldVer), err)
 	}
 
 	// inspect new version
-	newCaps, newLintIssues, err := inspectDep(dep, newVer)
+	newCaps, newLintIssues, err := inspectDep(allPkgs, modName, dep, newVer)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting %s: %w", makeVersionStr(dep, newVer), err)
 	}
