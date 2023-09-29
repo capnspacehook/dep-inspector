@@ -11,7 +11,7 @@
         <li><p>
             {{ $issue.FromLinter }}:<br>
             {{ $issue.Text }}<br>
-            <a href="{{ posToURL $issue.Pos }}">{{ $issue.Pos.Filename }}:{{ $issue.Pos.Line }}</a>
+            <a href="{{ posToURL $issue.Pos }}" target="_blank" rel="noopener noreferrer">{{ $issue.Pos.Filename }}:{{ $issue.Pos.Line }}</a>
         </p></li>
         {{ end }}
     </ul>

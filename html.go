@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"go/token"
 	"html/template"
+	"io"
 	"net/url"
 	"os"
 	"path"
@@ -26,7 +27,7 @@ type result struct {
 	LinterIssues []lintIssue
 }
 
-func formatHTMLOutput(dep, version string, caps []capability, issues []lintIssue) ([]byte, error) {
+func formatHTMLOutput(dep, version string, caps []capability, issues []lintIssue) (io.Reader, error) {
 	local, err := os.MkdirTemp("", tempPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("creating temporary directory: %w", err)
@@ -74,7 +75,7 @@ func formatHTMLOutput(dep, version string, caps []capability, issues []lintIssue
 		return nil, fmt.Errorf("error executing output template: %w", err)
 	}
 
-	return buf.Bytes(), nil
+	return &buf, nil
 }
 
 func posToURL(pos token.Position, version string, remoteURL *url.URL) string {

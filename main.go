@@ -5,12 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
 	"strings"
+
+	"github.com/pkg/browser"
 )
 
 const (
@@ -128,18 +129,18 @@ func mainRetCode() int {
 		}
 
 		if htmlOutput {
-			output, err := formatHTMLOutput(dep, ver, caps, lintIssues)
+			r, err := formatHTMLOutput(dep, ver, caps, lintIssues)
 			if err != nil {
 				log.Println(err)
 				return 1
 			}
-			handler := func(w http.ResponseWriter, r *http.Request) {
-				_, err := w.Write(output)
-				if err != nil {
-					log.Printf("error responding to HTTP request: %v", err)
-				}
+
+			err = browser.OpenReader(r)
+			if err != nil {
+				log.Println(err)
+				return 1
 			}
-			http.ListenAndServe("localhost:1337", http.HandlerFunc(handler))
+
 			return 0
 		}
 
