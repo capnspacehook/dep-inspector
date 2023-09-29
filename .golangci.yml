@@ -49,6 +49,8 @@ linters-settings:
       - default
       - prefix(github.com/capnspacehook/dep-inspector)
   gocritic:
+    disabled-checks:
+      - appendAssign
     settings:
       ifElseChain:
         minThreshold: 3

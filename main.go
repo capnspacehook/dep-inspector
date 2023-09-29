@@ -116,7 +116,7 @@ func mainRetCode() int {
 			return 1
 		}
 
-		printCaps(pkgIssues, goModCache)
+		printCaps(pkgIssues)
 		printLinterIssues(lintIssues, goModCache)
 		return 0
 	}
@@ -133,15 +133,15 @@ func mainRetCode() int {
 	// print package issues
 	if len(results.removedCaps) > 0 {
 		fmt.Println("removed capabilities:")
-		printCaps(results.removedCaps, goModCache)
+		printCaps(results.removedCaps)
 	}
 	if len(results.staleCaps) > 0 {
 		fmt.Println("stale capabilities:")
-		printCaps(results.staleCaps, goModCache)
+		printCaps(results.staleCaps)
 	}
 	if len(results.addedCaps) > 0 {
 		fmt.Println("added capabilities:")
-		printCaps(results.addedCaps, goModCache)
+		printCaps(results.addedCaps)
 	}
 	fmt.Printf("total:\nremoved capabilities: %d\nstale capabilities:   %d\nadded capabilities:   %d\n",
 		len(results.removedCaps),
@@ -174,7 +174,7 @@ func mainRetCode() int {
 func inspectDep(dep, version string) ([]capability, []lintIssue, error) {
 	versionStr := makeVersionStr(dep, version)
 	if err := setupDepVersion(versionStr); err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("setting up dependency: %w", err)
 	}
 
 	modFile, err := parseGoMod()
@@ -189,11 +189,11 @@ func inspectDep(dep, version string) ([]capability, []lintIssue, error) {
 
 	caps, err := findCapabilities(dep, versionStr, modName, pkgs)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("finding capabilities of dependency: %w", err)
 	}
-	lintIssues, err := lintDepVersion(dep, versionStr, modName, pkgs)
+	lintIssues, err := lintDepVersion(dep, versionStr, pkgs)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("linting dependency: %w", err)
 	}
 
 	return caps, lintIssues, err
@@ -211,22 +211,22 @@ type inspectResults struct {
 
 func inspectDepVersions(dep, oldVer, newVer string) (*inspectResults, error) {
 	// inspect old version
-	oldCapIssues, oldLintIssues, err := inspectDep(dep, oldVer)
+	oldCaps, oldLintIssues, err := inspectDep(dep, oldVer)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("inspecting %s: %w", makeVersionStr(dep, oldVer), err)
 	}
 
 	// inspect new version
-	newCaps, newLintIssues, err := inspectDep(dep, oldVer)
+	newCaps, newLintIssues, err := inspectDep(dep, newVer)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("inspecting %s: %w", makeVersionStr(dep, newVer), err)
 	}
 
 	// process linter issues and capabilities
 	fixedIssues, staleIssues, newIssues := processFindings(oldLintIssues, newLintIssues, func(a, b lintIssue) bool {
 		return issuesEqual(dep, a, b)
 	})
-	removedCaps, staleCaps, addedCaps := processFindings(oldCapIssues, newCaps, capsEqual)
+	removedCaps, staleCaps, addedCaps := processFindings(oldCaps, newCaps, capsEqual)
 
 	return &inspectResults{
 		fixedIssues: fixedIssues,
@@ -242,7 +242,7 @@ func getGoModCache() (string, error) {
 	var sb strings.Builder
 	err := runCommand(&sb, false, "go", "env", "GOMODCACHE")
 	if err != nil {
-		return "", fmt.Errorf("error getting GOMODCACHE: %v", err)
+		return "", fmt.Errorf("getting GOMODCACHE: %w", err)
 	}
 	// 'go env' output always ends with a newline
 	if sb.Len() < 2 {
@@ -256,11 +256,11 @@ func setupDepVersion(versionStr string) error {
 	// add dep to go.mod so linting it will work
 	err := runGoCommand("go", "get", versionStr)
 	if err != nil {
-		return fmt.Errorf("error downloading %q: %v", versionStr, err)
+		return fmt.Errorf("downloading %q: %w", versionStr, err)
 	}
 	err = runGoCommand("go", "mod", "tidy")
 	if err != nil {
-		return fmt.Errorf("error tidying modules: %v", err)
+		return fmt.Errorf("tidying modules: %w", err)
 	}
 
 	return nil
@@ -304,7 +304,7 @@ func printLinterIssues(issues []lintIssue, goModCache string) {
 	}
 }
 
-func printCaps(caps []capability, goModCache string) {
+func printCaps(caps []capability) {
 	for _, cap := range caps {
 		fmt.Printf("%s: %s\n", cap.Capability, cap.CapabilityType)
 		for i, call := range cap.Path {

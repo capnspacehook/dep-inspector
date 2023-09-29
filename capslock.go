@@ -47,7 +47,7 @@ func findCapabilities(dep, versionStr string, modName string, pkgs loadedPackage
 
 	var results capslockResult
 	if err := json.Unmarshal(output.Bytes(), &results); err != nil {
-		return nil, fmt.Errorf("error decoding: %v", err)
+		return nil, fmt.Errorf("decoding results from capslock: %w", err)
 	}
 	caps := results.CapabilityInfo
 

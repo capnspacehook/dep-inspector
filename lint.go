@@ -31,7 +31,7 @@ type lintIssue struct {
 	Pos         token.Position
 }
 
-func lintDepVersion(dep, versionStr string, modName string, pkgs loadedPackages) ([]lintIssue, error) {
+func lintDepVersion(dep, versionStr string, pkgs loadedPackages) ([]lintIssue, error) {
 	var dirs []string
 	for _, pkg := range pkgs {
 		if pkg.Module == nil || !strings.HasPrefix(pkg.Module.Path, dep) {
@@ -45,15 +45,15 @@ func lintDepVersion(dep, versionStr string, modName string, pkgs loadedPackages)
 	}
 
 	log.Printf("linting %s with golangci-lint", versionStr)
-	golangciIssues, err := golangciLint(dep, dirs)
+	golangciIssues, err := golangciLint(dirs)
 	if err != nil {
-		return nil, fmt.Errorf("error linting %s with golangci-lint: %v", versionStr, err)
+		return nil, fmt.Errorf("linting %s with golangci-lint: %w", versionStr, err)
 	}
 
 	log.Printf("linting %s with staticcheck", versionStr)
-	staticcheckIssues, err := staticcheckLint(dep, dirs)
+	staticcheckIssues, err := staticcheckLint(dirs)
 	if err != nil {
-		return nil, fmt.Errorf("error linting %s with staticcheck: %v", versionStr, err)
+		return nil, fmt.Errorf("linting %s with staticcheck: %w", versionStr, err)
 	}
 
 	// sort issues by linter and file
@@ -91,17 +91,17 @@ func lintDepVersion(dep, versionStr string, modName string, pkgs loadedPackages)
 	return issues, nil
 }
 
-func golangciLint(dep string, dirs []string) ([]lintIssue, error) {
+func golangciLint(dirs []string) ([]lintIssue, error) {
 	// write embedded golangci-lint config to a temporary file to it can
 	// be used later
 	cfgDir, err := os.MkdirTemp("", tempPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("error creating temporary file: %v", err)
+		return nil, fmt.Errorf("creating temporary file: %w", err)
 	}
 	defer os.RemoveAll(cfgDir)
 	golangciCfgPath := filepath.Join(cfgDir, golangciCfgName)
 	if err := os.WriteFile(golangciCfgPath, golangciCfgContents, 0o644); err != nil {
-		return nil, fmt.Errorf("error writing golangci-lint config file: %v", err)
+		return nil, fmt.Errorf("writing golangci-lint config file: %w", err)
 	}
 
 	var output bytes.Buffer
@@ -119,7 +119,7 @@ func golangciLint(dep string, dirs []string) ([]lintIssue, error) {
 
 	var results golangciResult
 	if err := json.Unmarshal(output.Bytes(), &results); err != nil {
-		return nil, fmt.Errorf("error decoding: %v", err)
+		return nil, fmt.Errorf("decoding golangci-lint results: %w", err)
 	}
 
 	return results.Issues, nil
@@ -138,7 +138,7 @@ type staticcheckPosition struct {
 	Column int
 }
 
-func staticcheckLint(dep string, dirs []string) ([]lintIssue, error) {
+func staticcheckLint(dirs []string) ([]lintIssue, error) {
 	var lintBuf bytes.Buffer
 	cmd := []string{"staticcheck", "-checks=SA1*,SA2*,SA4*,SA5*,SA9*", "-f=json", "-tests=false"}
 	cmd = append(cmd, dirs...)
@@ -157,7 +157,7 @@ func staticcheckLint(dep string, dirs []string) ([]lintIssue, error) {
 	for dec.More() {
 		var issue staticcheckIssue
 		if err := dec.Decode(&issue); err != nil {
-			return nil, fmt.Errorf("error decoding: %v", err)
+			return nil, fmt.Errorf("decoding staticcheck results: %w", err)
 		}
 		sIssues = append(sIssues, issue)
 	}
@@ -199,14 +199,14 @@ func trimLinterMsg(msg string) string {
 func getSrcLinesFromFile(path string, startLine, endLine int) ([]string, error) {
 	srcFile, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("error opening source file: %v", err)
+		return nil, fmt.Errorf("opening source file: %w", err)
 	}
 	defer srcFile.Close()
 	l := newLineReader(srcFile)
 
 	srcLines, err := getSrcLines(l, startLine, endLine)
 	if err != nil {
-		return nil, fmt.Errorf("error reading source file: %v", err)
+		return nil, fmt.Errorf("reading source file: %w", err)
 	}
 
 	return srcLines, nil

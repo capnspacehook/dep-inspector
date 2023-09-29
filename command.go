@@ -22,6 +22,9 @@ func runGoCommand(args ...string) error {
 	return buildCommand(writer, true, env, args...).Run()
 }
 
+// TODO: wrap error to print stderr
+//
+//nolint:unparam
 func runCommand(writer io.Writer, stderr bool, args ...string) error {
 	return buildCommand(writer, stderr, nil, args...).Run()
 }

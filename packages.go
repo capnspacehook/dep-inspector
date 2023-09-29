@@ -31,17 +31,17 @@ func parseGoMod() (*modfile.File, error) {
 	var output bytes.Buffer
 	err := runCommand(&output, false, "go", "env", "GOMOD")
 	if err != nil {
-		return nil, fmt.Errorf("error listing imports: %v", err)
+		return nil, fmt.Errorf("finding GOMOD: %w", err)
 	}
 
 	modFilePath := trimNewline(output.String())
 	modFileContents, err := os.ReadFile(modFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("error reading go.mod: %w", err)
+		return nil, fmt.Errorf("reading go.mod: %w", err)
 	}
 	modFile, err := modfile.Parse(modFilePath, modFileContents, nil)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing go.mod: %w", err)
+		return nil, fmt.Errorf("parsing go.mod: %w", err)
 	}
 
 	return modFile, err
