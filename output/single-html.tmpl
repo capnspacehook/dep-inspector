@@ -1,0 +1,18 @@
+<p>Findings for {{ .VersionStr }}:</p>
+
+<details>
+    <summary>Capabilities</summary>
+</details>
+
+<details>
+    <summary>Linter Issues</summary>
+    <ul>
+        {{ range $i, $issue := .LinterIssues }}
+        <li><p>
+            {{ $issue.FromLinter }}:<br>
+            {{ $issue.Text }}<br>
+            <a href="{{ posToURL $issue.Pos }}">{{ $issue.Pos.Filename }}:{{ $issue.Pos.Line }}</a>
+        </p></li>
+        {{ end }}
+    </ul>
+</details>

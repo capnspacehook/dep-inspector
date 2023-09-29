@@ -31,7 +31,7 @@ type lintIssue struct {
 	Pos         token.Position
 }
 
-func lintDepVersion(allPkgs bool, dep, versionStr string, pkgs loadedPackages) ([]lintIssue, error) {
+func lintDepVersion(allPkgs bool, dep, versionStr string, pkgs loadedPackages, goModCache string) ([]lintIssue, error) {
 	var dirs []string
 	for _, pkg := range pkgs {
 		if allPkgs {
@@ -88,8 +88,15 @@ func lintDepVersion(allPkgs bool, dep, versionStr string, pkgs loadedPackages) (
 		}
 		return 0
 	})
-	// make leading whitespace of source code lines uniform
 	for i := range issues {
+		filename := issues[i].Pos.Filename
+		filename, err = filepath.Abs(filename)
+		if err != nil {
+			return nil, fmt.Errorf("making path absolute: %w", err)
+		}
+		issues[i].Pos.Filename = trimFilename(filename, filepath.Join(goModCache, versionStr))
+
+		// make leading whitespace of source code lines uniform
 		for j := range issues[i].SourceLines {
 			srcLine := issues[i].SourceLines[j]
 			srcLine = "\t" + strings.TrimSpace(srcLine)

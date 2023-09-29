@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -20,6 +21,7 @@ const (
 
 var (
 	allPkgs      bool
+	htmlOutput   bool
 	logPath      string
 	verbose      bool
 	printVersion bool
@@ -56,6 +58,7 @@ func init() {
 	// - specify staticcheck checks
 	// - build tags
 	flag.BoolVar(&allPkgs, "a", false, "inspect all packages of the dependency, not just those that are used")
+	flag.BoolVar(&htmlOutput, "html", false, "output findings in html")
 	flag.StringVar(&logPath, "l", "stdout", "path to log to")
 	flag.BoolVar(&verbose, "v", false, "print commands being run and verbose information")
 	flag.BoolVar(&printVersion, "version", false, "print version and build information and exit")
@@ -118,21 +121,37 @@ func mainRetCode() int {
 			return 1
 		}
 		modName := modFile.Module.Mod.Path
-		pkgIssues, lintIssues, err := inspectDep(allPkgs, modName, dep, ver)
+		caps, lintIssues, err := inspectDep(allPkgs, modName, dep, ver, goModCache)
 		if err != nil {
 			log.Println(err)
 			return 1
 		}
 
-		printCaps(pkgIssues)
-		printLinterIssues(lintIssues, goModCache)
+		if htmlOutput {
+			output, err := formatHTMLOutput(dep, ver, caps, lintIssues)
+			if err != nil {
+				log.Println(err)
+				return 1
+			}
+			handler := func(w http.ResponseWriter, r *http.Request) {
+				_, err := w.Write(output)
+				if err != nil {
+					log.Printf("error responding to HTTP request: %v", err)
+				}
+			}
+			http.ListenAndServe("localhost:1337", http.HandlerFunc(handler))
+			return 0
+		}
+
+		printCaps(caps)
+		printLinterIssues(lintIssues)
 		return 0
 	}
 
 	dep := flag.Arg(0)
 	oldVer := flag.Arg(1)
 	newVer := flag.Arg(2)
-	results, err := inspectDepVersions(allPkgs, dep, oldVer, newVer)
+	results, err := inspectDepVersions(allPkgs, dep, oldVer, newVer, goModCache)
 	if err != nil {
 		log.Println(err)
 		return 1
@@ -160,15 +179,15 @@ func mainRetCode() int {
 	// print linter issues
 	if len(results.fixedIssues) > 0 {
 		fmt.Println("fixed issues:")
-		printLinterIssues(results.fixedIssues, goModCache)
+		printLinterIssues(results.fixedIssues)
 	}
 	if len(results.staleIssues) > 0 {
 		fmt.Println("stale issues:")
-		printLinterIssues(results.staleIssues, goModCache)
+		printLinterIssues(results.staleIssues)
 	}
 	if len(results.newIssues) > 0 {
 		fmt.Println("new issues:")
-		printLinterIssues(results.newIssues, goModCache)
+		printLinterIssues(results.newIssues)
 	}
 	fmt.Printf("total:\nfixed issues: %d\nstale issues: %d\nnew issues:   %d\n\n",
 		len(results.fixedIssues),
@@ -179,7 +198,7 @@ func mainRetCode() int {
 	return 0
 }
 
-func inspectDep(allPkgs bool, modName, dep, version string) ([]capability, []lintIssue, error) {
+func inspectDep(allPkgs bool, modName, dep, version, goModCache string) ([]capability, []lintIssue, error) {
 	versionStr := makeVersionStr(dep, version)
 	if err := setupDepVersion(versionStr); err != nil {
 		return nil, nil, fmt.Errorf("setting up dependency: %w", err)
@@ -194,7 +213,7 @@ func inspectDep(allPkgs bool, modName, dep, version string) ([]capability, []lin
 	if err != nil {
 		return nil, nil, fmt.Errorf("finding capabilities of dependency: %w", err)
 	}
-	lintIssues, err := lintDepVersion(allPkgs, dep, versionStr, pkgs)
+	lintIssues, err := lintDepVersion(allPkgs, dep, versionStr, pkgs, goModCache)
 	if err != nil {
 		return nil, nil, fmt.Errorf("linting dependency: %w", err)
 	}
@@ -212,7 +231,7 @@ type inspectResults struct {
 	addedCaps   []capability
 }
 
-func inspectDepVersions(allPkgs bool, dep, oldVer, newVer string) (*inspectResults, error) {
+func inspectDepVersions(allPkgs bool, dep, oldVer, newVer, goModCache string) (*inspectResults, error) {
 	modFile, err := parseGoMod()
 	if err != nil {
 		return nil, err
@@ -220,13 +239,13 @@ func inspectDepVersions(allPkgs bool, dep, oldVer, newVer string) (*inspectResul
 	modName := modFile.Module.Mod.Path
 
 	// inspect old version
-	oldCaps, oldLintIssues, err := inspectDep(allPkgs, modName, dep, oldVer)
+	oldCaps, oldLintIssues, err := inspectDep(allPkgs, modName, dep, oldVer, goModCache)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting %s: %w", makeVersionStr(dep, oldVer), err)
 	}
 
 	// inspect new version
-	newCaps, newLintIssues, err := inspectDep(allPkgs, modName, dep, newVer)
+	newCaps, newLintIssues, err := inspectDep(allPkgs, modName, dep, newVer, goModCache)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting %s: %w", makeVersionStr(dep, newVer), err)
 	}
@@ -304,12 +323,11 @@ func processFindings[T any](oldVerFindings, newVerFindings []T, equal func(a, b 
 	return fixedIssues, staleIssues, newIssues
 }
 
-func printLinterIssues(issues []lintIssue, goModCache string) {
+func printLinterIssues(issues []lintIssue) {
 	for _, issue := range issues {
-		filename := trimFilename(issue.Pos.Filename, goModCache)
 		srcLines := strings.Join(issue.SourceLines, "\n")
 
-		fmt.Printf("(%s) %s: %s:%d:%d:\n%s\n\n", issue.FromLinter, issue.Text, filename, issue.Pos.Line, issue.Pos.Column, srcLines)
+		fmt.Printf("(%s) %s: %s:%d:%d:\n%s\n\n", issue.FromLinter, issue.Text, issue.Pos.Filename, issue.Pos.Line, issue.Pos.Column, srcLines)
 	}
 }
 
