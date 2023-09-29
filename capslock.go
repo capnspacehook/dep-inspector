@@ -2,11 +2,19 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 )
+
+//go:embed configs/capslock
+var capMaps embed.FS
 
 type capslockResult struct {
 	CapabilityInfo []capability
@@ -37,9 +45,49 @@ func findCapabilities(dep, versionStr string, modName string, pkgs loadedPackage
 		return nil, err
 	}
 
+	// write embedded capability maps to a temporary file to it can
+	// be used by capslock
+	cfgDir, err := os.MkdirTemp("", tempPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("creating temporary directory: %w", err)
+	}
+	defer os.RemoveAll(cfgDir)
+
+	capMapFile, err := os.Create(filepath.Join(cfgDir, "dep-inspector.cm"))
+	if err != nil {
+		return nil, fmt.Errorf("creating temporary file: %w", err)
+	}
+
+	err = fs.WalkDir(capMaps, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		f, err := capMaps.Open(path)
+		if err != nil {
+			return fmt.Errorf("opening embedded capability map: %w", err)
+		}
+		defer f.Close()
+
+		_, err = io.Copy(capMapFile, f)
+		if err != nil {
+			return fmt.Errorf("writing to temporary file: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walking embedded capability maps: %w", err)
+	}
+	if err := capMapFile.Close(); err != nil {
+		return nil, fmt.Errorf("closing temporary file: %w", err)
+	}
+
 	log.Printf("finding capabilities of %s with capslock", versionStr)
 	var output bytes.Buffer
-	cmd := []string{"capslock", "-packages", strings.Join(depPkgs, ","), "-output=json"}
+	cmd := []string{"capslock", "-packages", strings.Join(depPkgs, ","), "-capability_map", capMapFile.Name(), "-output=json"}
 	err = runCommand(&output, false, cmd...)
 	if err != nil {
 		return nil, err

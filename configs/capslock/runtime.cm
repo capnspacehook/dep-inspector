@@ -1,0 +1,16 @@
+func runtime.BlockProfile CAPABILITY_RUNTIME
+func runtime.GC CAPABILITY_RUNTIME
+func runtime.GoroutineProfile CAPABILITY_RUNTIME
+func runtime.Gosched CAPABILITY_RUNTIME
+func runtime.KeepAlive CAPABILITY_RUNTIME
+func runtime.LockOSThread CAPABILITY_RUNTIME
+func runtime.MemProfile CAPABILITY_RUNTIME
+func runtime.MutexProfile CAPABILITY_RUNTIME
+func runtime.ReadTrace CAPABILITY_RUNTIME
+func runtime.SetBlockProfileRate CAPABILITY_RUNTIME
+func runtime.SetCPUProfileRate CAPABILITY_RUNTIME
+func runtime.SetMutexProfileFraction CAPABILITY_RUNTIME
+func runtime.Stack CAPABILITY_RUNTIME
+func runtime.StartTrace CAPABILITY_RUNTIME
+func runtime.StopTrace CAPABILITY_RUNTIME
+func runtime.ThreadCreateProfile CAPABILITY_RUNTIME

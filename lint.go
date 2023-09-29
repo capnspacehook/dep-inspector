@@ -93,10 +93,10 @@ func lintDepVersion(dep, versionStr string, pkgs loadedPackages) ([]lintIssue, e
 
 func golangciLint(dirs []string) ([]lintIssue, error) {
 	// write embedded golangci-lint config to a temporary file to it can
-	// be used later
+	// be used by golangci-lint
 	cfgDir, err := os.MkdirTemp("", tempPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("creating temporary file: %w", err)
+		return nil, fmt.Errorf("creating temporary directory: %w", err)
 	}
 	defer os.RemoveAll(cfgDir)
 	golangciCfgPath := filepath.Join(cfgDir, golangciCfgName)
