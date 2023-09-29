@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Masterminds/vcs"
+	"golang.org/x/mod/module"
 )
 
 //go:embed output/single-html.tmpl
@@ -50,11 +51,22 @@ func formatHTMLOutput(dep, version string, caps []capability, issues []lintIssue
 		return nil, fmt.Errorf("parsing remote URL: %w", err)
 	}
 
+	// make the version not Go specific
+	ver := version
+	var verIsCommit bool
+	if module.IsPseudoVersion(version) {
+		ver, err = module.PseudoVersionRev(version)
+		if err != nil {
+			return nil, fmt.Errorf("parsing module version: %w", err)
+		}
+		verIsCommit = true
+	} else {
+		ver = strings.TrimSuffix(version, "+incompatible")
+	}
+
 	funcMap := map[string]any{
 		"posToURL": func(pos token.Position) string {
-			// make the tag not Go specific
-			ver := strings.TrimSuffix(version, "+incompatible")
-			return posToURL(pos, ver, remoteURL)
+			return posToURL(pos, ver, verIsCommit, remoteURL)
 		},
 	}
 
@@ -78,12 +90,25 @@ func formatHTMLOutput(dep, version string, caps []capability, issues []lintIssue
 	return &buf, nil
 }
 
-func posToURL(pos token.Position, version string, remoteURL *url.URL) string {
-	// TODO: handle other remotes than Github
-
+func posToURL(pos token.Position, version string, isCommit bool, remoteURL *url.URL) string {
 	newURL := *remoteURL
-	newURL.Fragment = "L" + strconv.Itoa(pos.Line)
-	newURL.Path = path.Join(newURL.Path, "blob", version, pos.Filename)
+	line := strconv.Itoa(pos.Line)
+	newURL.Fragment = "L" + line
+
+	switch newURL.Host {
+	case "github.com":
+		newURL.Path = path.Join(newURL.Path, "blob", version, pos.Filename)
+	case "gitlab.com":
+		newURL.Path = path.Join(newURL.Path, "-", "blob", version, pos.Filename)
+	case "gittea.dev":
+		srcType := "tag"
+		if isCommit {
+			srcType = "commit"
+		}
+		newURL.Path = path.Join(newURL.Path, "src", srcType, version, pos.Filename)
+	default:
+		return pos.Filename + ":" + line
+	}
 
 	return newURL.String()
 }
