@@ -1,17 +1,20 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
+	"os/signal"
 	"runtime/debug"
 	"slices"
 	"strings"
 
 	"github.com/pkg/browser"
+	"golang.org/x/mod/modfile"
 )
 
 const (
@@ -20,24 +23,16 @@ const (
 	tempPrefix = "dep-inspector"
 )
 
-var (
-	allPkgs      bool
-	htmlOutput   bool
-	logPath      string
-	verbose      bool
-	printVersion bool
-
-	goEnvVars = []string{
-		"HOME",
-		"PATH",
-	}
-)
+var goEnvVars = []string{
+	"HOME",
+	"PATH",
+}
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `
 <Project description>
 
-	<binary name> [flags]
+	dep-inspector [flags]
 
 <Project details/usage>
 
@@ -51,38 +46,30 @@ For more information, see https://github.com/capnspacehook/dep-inspector.
 `[1:])
 }
 
-func init() {
-	flag.Usage = usage
-	// TODO: add flags for:
-	// - lint tests
-	// - merge golangci-lint config
-	// - specify staticcheck checks
-	// - build tags
-	flag.BoolVar(&allPkgs, "a", false, "inspect all packages of the dependency, not just those that are used")
-	flag.BoolVar(&htmlOutput, "html", false, "output findings in html")
-	flag.StringVar(&logPath, "l", "stdout", "path to log to")
-	flag.BoolVar(&verbose, "v", false, "print commands being run and verbose information")
-	flag.BoolVar(&printVersion, "version", false, "print version and build information and exit")
-}
-
 func main() {
 	os.Exit(mainRetCode())
 }
 
-/*
-TODO:
+type depInspector struct {
+	inspectAllPkgs bool
+	htmlOutput     bool
+	verbose        bool
 
-- inspect changed indirect deps as well
-
-- check if embed is imported
-  - check size diff of embedded files
-  - try and determine type of file
-    - https://pkg.go.dev/github.com/h2non/filetype#Match
-	- only need first 262 bytes of file
-- check binary diff of with updated dep(s)?
-*/
+	modFile  *modfile.File
+	modCache string
+}
 
 func mainRetCode() int {
+	var (
+		de           depInspector
+		printVersion bool
+	)
+
+	flag.Usage = usage
+	flag.BoolVar(&de.inspectAllPkgs, "a", false, "inspect all packages of the dependency, not just those that are used")
+	flag.BoolVar(&de.htmlOutput, "html", false, "output findings in html")
+	flag.BoolVar(&de.verbose, "v", false, "print commands being run and verbose information")
+	flag.BoolVar(&printVersion, "version", false, "print version and build information and exit")
 	flag.Parse()
 
 	info, ok := debug.ReadBuildInfo()
@@ -100,10 +87,28 @@ func mainRetCode() int {
 		return 2
 	}
 
-	goModCache, err := getGoModCache()
-	if err != nil {
-		log.Println(err)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	if err := mainErr(ctx, de); err != nil {
+		var exitErr *errJustExit
+		if errors.As(err, &exitErr) {
+			return int(*exitErr)
+		}
+		log.Printf("error: %v", err)
 		return 1
+	}
+
+	return 0
+}
+
+type errJustExit int
+
+func (e errJustExit) Error() string { return fmt.Sprintf("exit: %d", e) }
+
+func mainErr(ctx context.Context, inspector depInspector) error {
+	if err := inspector.init(ctx); err != nil {
+		return err
 	}
 
 	if flag.NArg() == 1 {
@@ -113,113 +118,97 @@ func mainRetCode() int {
 			// TODO: support not passing version and just using what's in go.mod
 			log.Println(`malformed version string: no "@" present`)
 			usage()
-			return 2
+			return errJustExit(2)
 		}
 
-		modFile, err := parseGoMod()
+		err := inspector.inspectSingleDep(ctx, dep, ver)
 		if err != nil {
-			log.Println(err)
-			return 1
+			return err
 		}
-		modName := modFile.Module.Mod.Path
-		caps, lintIssues, err := inspectDep(allPkgs, modName, dep, ver, goModCache)
-		if err != nil {
-			log.Println(err)
-			return 1
-		}
-
-		if htmlOutput {
-			r, err := formatHTMLOutput(dep, ver, caps, lintIssues)
-			if err != nil {
-				log.Println(err)
-				return 1
-			}
-
-			err = browser.OpenReader(r)
-			if err != nil {
-				log.Println(err)
-				return 1
-			}
-
-			return 0
-		}
-
-		printCaps(caps)
-		printLinterIssues(lintIssues)
-		return 0
+		return nil
 	}
 
 	dep := flag.Arg(0)
 	oldVer := flag.Arg(1)
 	newVer := flag.Arg(2)
-	results, err := inspectDepVersions(allPkgs, dep, oldVer, newVer, goModCache)
+	err := inspector.compareDepVersions(ctx, dep, oldVer, newVer)
 	if err != nil {
-		log.Println(err)
-		return 1
+		return err
 	}
 
-	// print package issues
-	if len(results.removedCaps) > 0 {
-		fmt.Println("removed capabilities:")
-		printCaps(results.removedCaps)
-	}
-	if len(results.staleCaps) > 0 {
-		fmt.Println("stale capabilities:")
-		printCaps(results.staleCaps)
-	}
-	if len(results.addedCaps) > 0 {
-		fmt.Println("added capabilities:")
-		printCaps(results.addedCaps)
-	}
-	fmt.Printf("total:\nremoved capabilities: %d\nstale capabilities:   %d\nadded capabilities:   %d\n",
-		len(results.removedCaps),
-		len(results.staleCaps),
-		len(results.addedCaps),
-	)
-
-	// print linter issues
-	if len(results.fixedIssues) > 0 {
-		fmt.Println("fixed issues:")
-		printLinterIssues(results.fixedIssues)
-	}
-	if len(results.staleIssues) > 0 {
-		fmt.Println("stale issues:")
-		printLinterIssues(results.staleIssues)
-	}
-	if len(results.newIssues) > 0 {
-		fmt.Println("new issues:")
-		printLinterIssues(results.newIssues)
-	}
-	fmt.Printf("total:\nfixed issues: %d\nstale issues: %d\nnew issues:   %d\n\n",
-		len(results.fixedIssues),
-		len(results.staleIssues),
-		len(results.newIssues),
-	)
-
-	return 0
+	return nil
 }
 
-func inspectDep(allPkgs bool, modName, dep, version, goModCache string) ([]capability, []lintIssue, error) {
+func (d *depInspector) init(ctx context.Context) (err error) {
+	d.modFile, err = d.parseGoMod(ctx)
+	if err != nil {
+		return err
+	}
+	d.modCache, err = d.getGoModCache(ctx)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *depInspector) inspectSingleDep(ctx context.Context, dep, version string) error {
+	caps, lintIssues, err := d.inspectDep(ctx, dep, version)
+	if err != nil {
+		return err
+	}
+
+	if d.htmlOutput {
+		r, err := formatHTMLOutput(dep, version, caps, lintIssues)
+		if err != nil {
+			return err
+		}
+
+		err = browser.OpenReader(r)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	printCaps(caps)
+	printLinterIssues(lintIssues)
+
+	return nil
+}
+
+func (d *depInspector) inspectDep(ctx context.Context, dep, version string) ([]capability, []lintIssue, error) {
 	versionStr := makeVersionStr(dep, version)
-	if err := setupDepVersion(versionStr); err != nil {
+	if err := d.setupDepVersion(ctx, versionStr); err != nil {
 		return nil, nil, fmt.Errorf("setting up dependency: %w", err)
 	}
 
-	pkgs, err := listPackages(modName)
+	pkgs, err := listPackages(d.modFile.Module.Mod.Path)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	caps, err := findCapabilities(allPkgs, dep, versionStr, modName, pkgs)
+	caps, err := d.findCapabilities(ctx, dep, versionStr, pkgs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("finding capabilities of dependency: %w", err)
 	}
-	lintIssues, err := lintDepVersion(allPkgs, dep, versionStr, pkgs, goModCache)
+	lintIssues, err := d.lintDepVersion(ctx, dep, versionStr, pkgs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("linting dependency: %w", err)
 	}
 
 	return caps, lintIssues, err
+}
+
+func (d *depInspector) compareDepVersions(ctx context.Context, dep, oldVer, newVer string) error {
+	results, err := d.inspectDepVersions(ctx, dep, oldVer, newVer)
+	if err != nil {
+		return err
+	}
+
+	printDepComparison(results)
+
+	return nil
 }
 
 type inspectResults struct {
@@ -232,21 +221,15 @@ type inspectResults struct {
 	addedCaps   []capability
 }
 
-func inspectDepVersions(allPkgs bool, dep, oldVer, newVer, goModCache string) (*inspectResults, error) {
-	modFile, err := parseGoMod()
-	if err != nil {
-		return nil, err
-	}
-	modName := modFile.Module.Mod.Path
-
+func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newVer string) (*inspectResults, error) {
 	// inspect old version
-	oldCaps, oldLintIssues, err := inspectDep(allPkgs, modName, dep, oldVer, goModCache)
+	oldCaps, oldLintIssues, err := d.inspectDep(ctx, dep, oldVer)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting %s: %w", makeVersionStr(dep, oldVer), err)
 	}
 
 	// inspect new version
-	newCaps, newLintIssues, err := inspectDep(allPkgs, modName, dep, newVer, goModCache)
+	newCaps, newLintIssues, err := d.inspectDep(ctx, dep, newVer)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting %s: %w", makeVersionStr(dep, newVer), err)
 	}
@@ -267,9 +250,36 @@ func inspectDepVersions(allPkgs bool, dep, oldVer, newVer, goModCache string) (*
 	}, nil
 }
 
-func getGoModCache() (string, error) {
+func (d *depInspector) parseGoMod(ctx context.Context) (*modfile.File, error) {
+	var output bytes.Buffer
+	err := d.runCommand(ctx, &output, "go", "env", "GOMOD")
+	if err != nil {
+		return nil, fmt.Errorf("finding GOMOD: %w", err)
+	}
+
+	modFilePath := trimNewline(output.String())
+	modFileContents, err := os.ReadFile(modFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("reading go.mod: %w", err)
+	}
+	modFile, err := modfile.Parse(modFilePath, modFileContents, nil)
+	if err != nil {
+		return nil, fmt.Errorf("parsing go.mod: %w", err)
+	}
+
+	return modFile, err
+}
+
+func trimNewline(s string) string {
+	if len(s) != 0 && s[len(s)-1] == '\n' {
+		return s[:len(s)-1]
+	}
+	return s
+}
+
+func (d *depInspector) getGoModCache(ctx context.Context) (string, error) {
 	var sb strings.Builder
-	err := runCommand(&sb, false, "go", "env", "GOMODCACHE")
+	err := d.runCommand(ctx, &sb, "go", "env", "GOMODCACHE")
 	if err != nil {
 		return "", fmt.Errorf("getting GOMODCACHE: %w", err)
 	}
@@ -281,13 +291,13 @@ func getGoModCache() (string, error) {
 	return sb.String()[:sb.Len()-1], nil
 }
 
-func setupDepVersion(versionStr string) error {
+func (d *depInspector) setupDepVersion(ctx context.Context, versionStr string) error {
 	// add dep to go.mod so linting it will work
-	err := runGoCommand("go", "get", versionStr)
+	err := d.runGoCommand(ctx, "go", "get", versionStr)
 	if err != nil {
 		return fmt.Errorf("downloading %q: %w", versionStr, err)
 	}
-	err = runGoCommand("go", "mod", "tidy")
+	err = d.runGoCommand(ctx, "go", "mod", "tidy")
 	if err != nil {
 		return fmt.Errorf("tidying modules: %w", err)
 	}
@@ -324,39 +334,6 @@ func processFindings[T any](oldVerFindings, newVerFindings []T, equal func(a, b 
 	return fixedIssues, staleIssues, newIssues
 }
 
-func printLinterIssues(issues []lintIssue) {
-	for _, issue := range issues {
-		srcLines := strings.Join(issue.SourceLines, "\n")
-
-		fmt.Printf("(%s) %s: %s:%d:%d:\n%s\n\n", issue.FromLinter, issue.Text, issue.Pos.Filename, issue.Pos.Line, issue.Pos.Column, srcLines)
-	}
-}
-
-func printCaps(caps []capability) {
-	for _, cap := range caps {
-		fmt.Printf("%s: %s\n", cap.Capability, cap.CapabilityType)
-		for i, call := range cap.Path {
-			if i == 0 {
-				fmt.Println(call.Name)
-				continue
-			}
-
-			if call.Site.Filename != "" {
-				fmt.Printf("  %s %s:%s:%s\n",
-					call.Name,
-					call.Site.Filename,
-					call.Site.Line,
-					call.Site.Column,
-				)
-				continue
-			}
-			fmt.Printf("  %s\n", call.Name)
-		}
-
-		fmt.Print("\n\n")
-	}
-}
-
-func trimFilename(path, goModCache string) string {
-	return strings.TrimPrefix(path, goModCache+string(filepath.Separator))
+func makeVersionStr(dep, version string) string {
+	return dep + "@" + version
 }

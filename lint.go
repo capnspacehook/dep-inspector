@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -31,10 +32,10 @@ type lintIssue struct {
 	Pos         token.Position
 }
 
-func lintDepVersion(allPkgs bool, dep, versionStr string, pkgs loadedPackages, goModCache string) ([]lintIssue, error) {
+func (d *depInspector) lintDepVersion(ctx context.Context, dep, versionStr string, pkgs loadedPackages) ([]lintIssue, error) {
 	var dirs []string
 	for _, pkg := range pkgs {
-		if allPkgs {
+		if d.inspectAllPkgs {
 			if pkg.Module == nil || pkg.Module.Path != dep {
 				continue
 			}
@@ -54,13 +55,13 @@ func lintDepVersion(allPkgs bool, dep, versionStr string, pkgs loadedPackages, g
 	}
 
 	log.Printf("linting %s with golangci-lint", versionStr)
-	golangciIssues, err := golangciLint(dirs)
+	golangciIssues, err := d.golangciLint(ctx, dirs)
 	if err != nil {
 		return nil, fmt.Errorf("linting %s with golangci-lint: %w", versionStr, err)
 	}
 
 	log.Printf("linting %s with staticcheck", versionStr)
-	staticcheckIssues, err := staticcheckLint(dirs)
+	staticcheckIssues, err := d.staticcheckLint(ctx, dirs)
 	if err != nil {
 		return nil, fmt.Errorf("linting %s with staticcheck: %w", versionStr, err)
 	}
@@ -94,7 +95,7 @@ func lintDepVersion(allPkgs bool, dep, versionStr string, pkgs loadedPackages, g
 		if err != nil {
 			return nil, fmt.Errorf("making path absolute: %w", err)
 		}
-		issues[i].Pos.Filename = trimFilename(filename, filepath.Join(goModCache, versionStr))
+		issues[i].Pos.Filename = trimFilename(filename, filepath.Join(d.modCache, versionStr))
 
 		// make leading whitespace of source code lines uniform
 		for j := range issues[i].SourceLines {
@@ -107,7 +108,7 @@ func lintDepVersion(allPkgs bool, dep, versionStr string, pkgs loadedPackages, g
 	return issues, nil
 }
 
-func golangciLint(dirs []string) ([]lintIssue, error) {
+func (d *depInspector) golangciLint(ctx context.Context, dirs []string) ([]lintIssue, error) {
 	// write embedded golangci-lint config to a temporary file to it can
 	// be used by golangci-lint
 	cfgDir, err := os.MkdirTemp("", tempPrefix)
@@ -123,7 +124,7 @@ func golangciLint(dirs []string) ([]lintIssue, error) {
 	var output bytes.Buffer
 	cmd := []string{"golangci-lint", "run", "-c", golangciCfgPath, "--out-format=json"}
 	cmd = append(cmd, dirs...)
-	err = runCommand(&output, false, cmd...)
+	err = d.runCommand(ctx, &output, cmd...)
 	if err != nil {
 		// golangci-lint will exit with 1 if any linters returned issues,
 		// but that doesn't mean it itself failed
@@ -154,11 +155,11 @@ type staticcheckPosition struct {
 	Column int
 }
 
-func staticcheckLint(dirs []string) ([]lintIssue, error) {
+func (d *depInspector) staticcheckLint(ctx context.Context, dirs []string) ([]lintIssue, error) {
 	var lintBuf bytes.Buffer
 	cmd := []string{"staticcheck", "-checks=SA1*,SA2*,SA4*,SA5*,SA9*", "-f=json", "-tests=false"}
 	cmd = append(cmd, dirs...)
-	err := runCommand(&lintBuf, false, cmd...)
+	err := d.runCommand(ctx, &lintBuf, cmd...)
 	if err != nil {
 		// staticcheck will exit with 1 if any issues are found, but
 		// that doesn't mean it itself failed
@@ -276,6 +277,6 @@ func getDepRelPath(dep, path string) string {
 	return path[depVerIdx+slashIdx:]
 }
 
-func makeVersionStr(dep, version string) string {
-	return dep + "@" + version
+func trimFilename(path, goModCache string) string {
+	return strings.TrimPrefix(path, goModCache+string(filepath.Separator))
 }

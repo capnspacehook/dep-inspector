@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"os"
+	"slices"
 	"strings"
 
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
-	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -25,33 +22,6 @@ func listPackages(modName string) (loadedPackages, error) {
 	mapLoadedPkgs(pkgs, loadedPkgs)
 
 	return loadedPkgs, nil
-}
-
-func parseGoMod() (*modfile.File, error) {
-	var output bytes.Buffer
-	err := runCommand(&output, false, "go", "env", "GOMOD")
-	if err != nil {
-		return nil, fmt.Errorf("finding GOMOD: %w", err)
-	}
-
-	modFilePath := trimNewline(output.String())
-	modFileContents, err := os.ReadFile(modFilePath)
-	if err != nil {
-		return nil, fmt.Errorf("reading go.mod: %w", err)
-	}
-	modFile, err := modfile.Parse(modFilePath, modFileContents, nil)
-	if err != nil {
-		return nil, fmt.Errorf("parsing go.mod: %w", err)
-	}
-
-	return modFile, err
-}
-
-func trimNewline(s string) string {
-	if len(s) != 0 && s[len(s)-1] == '\n' {
-		return s[:len(s)-1]
-	}
-	return s
 }
 
 func mapLoadedPkgs(pkgs []*packages.Package, loadedPkgs loadedPackages) {

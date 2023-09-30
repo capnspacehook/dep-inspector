@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -39,11 +40,11 @@ type callSite struct {
 	Column   string
 }
 
-func findCapabilities(allPkgs bool, dep, versionStr string, modName string, pkgs loadedPackages) ([]capability, error) {
+func (d *depInspector) findCapabilities(ctx context.Context, dep, versionStr string, pkgs loadedPackages) ([]capability, error) {
 	depPkgs := []string{dep + "/..."}
 	var err error
-	if !allPkgs {
-		depPkgs, err = listImportedPackages(dep, modName, pkgs)
+	if !d.inspectAllPkgs {
+		depPkgs, err = listImportedPackages(dep, d.modFile.Module.Mod.Path, pkgs)
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +93,7 @@ func findCapabilities(allPkgs bool, dep, versionStr string, modName string, pkgs
 	log.Printf("finding capabilities of %s with capslock", versionStr)
 	var output bytes.Buffer
 	cmd := []string{"capslock", "-packages", strings.Join(depPkgs, ","), "-capability_map", capMapFile.Name(), "-output=json"}
-	err = runCommand(&output, false, cmd...)
+	err = d.runCommand(ctx, &output, cmd...)
 	if err != nil {
 		return nil, err
 	}

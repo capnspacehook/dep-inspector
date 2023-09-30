@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -8,33 +9,25 @@ import (
 	"os/exec"
 )
 
-func runGoCommand(args ...string) error {
-	var writer io.Writer
-	if verbose {
-		writer = os.Stderr
-	}
-
+func (d *depInspector) runGoCommand(ctx context.Context, args ...string) error {
 	env := make([]string, len(goEnvVars))
 	for _, envVar := range goEnvVars {
 		env = append(env, fmt.Sprintf("%s=%s", envVar, os.Getenv(envVar)))
 	}
 
-	return buildCommand(writer, true, env, args...).Run()
+	return d.buildCommand(ctx, nil, true, env, args...).Run()
 }
 
-// TODO: wrap error to print stderr
-//
-//nolint:unparam
-func runCommand(writer io.Writer, stderr bool, args ...string) error {
-	return buildCommand(writer, stderr, nil, args...).Run()
+func (d *depInspector) runCommand(ctx context.Context, writer io.Writer, args ...string) error {
+	return d.buildCommand(ctx, writer, false, nil, args...).Run()
 }
 
-func buildCommand(writer io.Writer, stderr bool, env []string, args ...string) *exec.Cmd {
+func (d *depInspector) buildCommand(ctx context.Context, writer io.Writer, stderr bool, env []string, args ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	if len(args) == 1 {
-		cmd = exec.Command(args[0])
+		cmd = exec.CommandContext(ctx, args[0])
 	} else {
-		cmd = exec.Command(args[0], args[1:]...)
+		cmd = exec.CommandContext(ctx, args[0], args[1:]...)
 	}
 
 	cmd.Env = env
@@ -43,7 +36,7 @@ func buildCommand(writer io.Writer, stderr bool, env []string, args ...string) *
 		cmd.Stderr = writer
 	}
 
-	if verbose {
+	if d.verbose {
 		log.Printf("running command: %q", cmd)
 	}
 
