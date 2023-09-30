@@ -6,13 +6,26 @@
 
 <details>
     <summary>Linter Issues</summary>
-    <ul>
-        {{ range $i, $issue := .LinterIssues }}
-        <li><p>
-            {{ $issue.FromLinter }}:<br>
-            {{ $issue.Text }}<br>
-            <a href="{{ posToURL $issue.Pos }}" target="_blank" rel="noopener noreferrer">{{ $issue.Pos.Filename }}:{{ $issue.Pos.Line }}</a>
-        </p></li>
-        {{ end }}
-    </ul>
+    {{ range $pkg, $issues := .IssuePkgs }}
+    <div style="padding-left: 2ch">
+        <details>
+            <summary>{{ $.VersionStr }}/{{ $pkg }}</summary>
+            {{ range $linter, $issues := issuesByLinter $issues }}
+            <div style="padding-left: 4ch">
+                <details>
+                    <summary>{{ $linter }}</summary>
+                    <ul>
+                        {{ range $_, $issue := $issues }}
+                        <li><p>
+                            {{ $issue.Text }}<br>
+                            <a href="{{ posToURL $issue.Pos }}" target="_blank" rel="noopener noreferrer">{{ $issue.Pos.Filename }}:{{ $issue.Pos.Line }}</a>
+                        </p></li>
+                        {{ end }}
+                    </ul>
+                </details>
+            </div>
+            {{ end }}
+        </details>
+    </div>
+    {{ end }}
 </details>

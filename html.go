@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Masterminds/vcs"
+	"github.com/samber/lo"
 	"golang.org/x/mod/module"
 )
 
@@ -25,7 +26,7 @@ type result struct {
 	VersionStr string
 	RemoteURL  *url.URL
 
-	LinterIssues []lintIssue
+	IssuePkgs map[string][]lintIssue
 }
 
 func formatHTMLOutput(dep, version string, caps []capability, issues []lintIssue) (io.Reader, error) {
@@ -65,6 +66,11 @@ func formatHTMLOutput(dep, version string, caps []capability, issues []lintIssue
 	}
 
 	funcMap := map[string]any{
+		"issuesByLinter": func(issues []lintIssue) map[string][]lintIssue {
+			return lo.GroupBy(issues, func(issue lintIssue) string {
+				return issue.FromLinter
+			})
+		},
 		"posToURL": func(pos token.Position) string {
 			return posToURL(pos, ver, verIsCommit, remoteURL)
 		},
@@ -75,11 +81,15 @@ func formatHTMLOutput(dep, version string, caps []capability, issues []lintIssue
 		return nil, fmt.Errorf("error parsing output template: %w", err)
 	}
 
+	pkgIssues := lo.GroupBy(issues, func(issue lintIssue) string {
+		return path.Dir(issue.Pos.Filename)
+	})
+
 	res := &result{
-		Dep:          dep,
-		VersionStr:   makeVersionStr(dep, version),
-		RemoteURL:    remoteURL,
-		LinterIssues: issues,
+		Dep:        dep,
+		VersionStr: makeVersionStr(dep, version),
+		RemoteURL:  remoteURL,
+		IssuePkgs:  pkgIssues,
 	}
 
 	var buf bytes.Buffer
