@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/pkg/browser"
 	"golang.org/x/mod/modfile"
@@ -188,16 +189,47 @@ func (d *depInspector) inspectDep(ctx context.Context, dep, version string) ([]c
 		return nil, nil, err
 	}
 
-	caps, err := d.findCapabilities(ctx, dep, versionStr, pkgs)
-	if err != nil {
-		return nil, nil, fmt.Errorf("finding capabilities of dependency: %w", err)
+	var (
+		capsCh   = make(chan []capability, 1)
+		issuesCh = make(chan []lintIssue, 1)
+		errCh    = make(chan error, 2)
+		wg       sync.WaitGroup
+	)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+
+		caps, err := d.findCapabilities(ctx, dep, versionStr, pkgs)
+		if err != nil {
+			errCh <- fmt.Errorf("finding capabilities of dependency: %w", err)
+			return
+		}
+		capsCh <- caps
+	}()
+	go func() {
+		defer wg.Done()
+
+		issues, err := d.lintDepVersion(ctx, dep, versionStr, pkgs)
+		if err != nil {
+			errCh <- fmt.Errorf("linting dependency: %w", err)
+			return
+		}
+		issuesCh <- issues
+	}()
+
+	wg.Wait()
+	close(errCh)
+
+	var inspectErrs []error
+	for err := range errCh {
+		inspectErrs = append(inspectErrs, err)
 	}
-	lintIssues, err := d.lintDepVersion(ctx, dep, versionStr, pkgs)
-	if err != nil {
-		return nil, nil, fmt.Errorf("linting dependency: %w", err)
+	if len(inspectErrs) != 0 {
+		return nil, nil, errors.Join(inspectErrs...)
 	}
 
-	return caps, lintIssues, err
+	return <-capsCh, <-issuesCh, nil
 }
 
 func (d *depInspector) compareDepVersions(ctx context.Context, dep, oldVer, newVer string) error {

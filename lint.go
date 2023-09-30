@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 )
 
 const golangciCfgName = ".golangci.yml"
@@ -54,20 +55,49 @@ func (d *depInspector) lintDepVersion(ctx context.Context, dep, versionStr strin
 		}
 	}
 
-	log.Printf("linting %s with golangci-lint", versionStr)
-	golangciIssues, err := d.golangciLint(ctx, dirs)
-	if err != nil {
-		return nil, fmt.Errorf("linting %s with golangci-lint: %w", versionStr, err)
-	}
+	var (
+		issuesCh = make(chan []lintIssue, 2)
+		errCh    = make(chan error, 2)
+		wg       sync.WaitGroup
+	)
 
-	log.Printf("linting %s with staticcheck", versionStr)
-	staticcheckIssues, err := d.staticcheckLint(ctx, dirs)
-	if err != nil {
-		return nil, fmt.Errorf("linting %s with staticcheck: %w", versionStr, err)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+
+		log.Printf("linting %s with golangci-lint", versionStr)
+		issues, err := d.golangciLint(ctx, dirs)
+		if err != nil {
+			errCh <- fmt.Errorf("linting with golangci-lint: %w", err)
+			return
+		}
+		issuesCh <- issues
+	}()
+	go func() {
+		defer wg.Done()
+
+		log.Printf("linting %s with staticcheck", versionStr)
+		issues, err := d.staticcheckLint(ctx, dirs)
+		if err != nil {
+			errCh <- fmt.Errorf("linting with staticcheck: %w", err)
+			return
+		}
+		issuesCh <- issues
+	}()
+
+	wg.Wait()
+	close(errCh)
+
+	var linterErrs []error
+	for err := range errCh {
+		linterErrs = append(linterErrs, err)
+	}
+	if len(linterErrs) != 0 {
+		return nil, errors.Join(linterErrs...)
 	}
 
 	// sort issues by linter and file
-	issues := append(golangciIssues, staticcheckIssues...)
+	issues := append(<-issuesCh, <-issuesCh...)
 	slices.SortFunc(issues, func(a, b lintIssue) int {
 		if a.FromLinter != b.FromLinter {
 			return strings.Compare(a.FromLinter, b.FromLinter)
@@ -91,7 +121,7 @@ func (d *depInspector) lintDepVersion(ctx context.Context, dep, versionStr strin
 	})
 	for i := range issues {
 		filename := issues[i].Pos.Filename
-		filename, err = filepath.Abs(filename)
+		filename, err := filepath.Abs(filename)
 		if err != nil {
 			return nil, fmt.Errorf("making path absolute: %w", err)
 		}
