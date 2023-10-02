@@ -153,13 +153,13 @@ func (d *depInspector) init(ctx context.Context) (err error) {
 }
 
 func (d *depInspector) inspectSingleDep(ctx context.Context, dep, version string) error {
-	caps, lintIssues, err := d.inspectDep(ctx, dep, version)
+	capResult, lintIssues, err := d.inspectDep(ctx, dep, version)
 	if err != nil {
 		return err
 	}
 
 	if d.htmlOutput {
-		r, err := formatHTMLOutput(dep, version, caps, lintIssues)
+		r, err := d.formatHTMLOutput(ctx, dep, version, capResult, lintIssues)
 		if err != nil {
 			return err
 		}
@@ -172,13 +172,13 @@ func (d *depInspector) inspectSingleDep(ctx context.Context, dep, version string
 		return nil
 	}
 
-	printCaps(caps)
+	printCaps(capResult.CapabilityInfo)
 	printLinterIssues(lintIssues)
 
 	return nil
 }
 
-func (d *depInspector) inspectDep(ctx context.Context, dep, version string) ([]capability, []lintIssue, error) {
+func (d *depInspector) inspectDep(ctx context.Context, dep, version string) (*capslockResult, []lintIssue, error) {
 	versionStr := makeVersionStr(dep, version)
 	if err := d.setupDepVersion(ctx, versionStr); err != nil {
 		return nil, nil, fmt.Errorf("setting up dependency: %w", err)
@@ -190,7 +190,7 @@ func (d *depInspector) inspectDep(ctx context.Context, dep, version string) ([]c
 	}
 
 	var (
-		capsCh   = make(chan []capability, 1)
+		capsCh   = make(chan *capslockResult, 1)
 		issuesCh = make(chan []lintIssue, 1)
 		errCh    = make(chan error, 2)
 		wg       sync.WaitGroup
@@ -200,12 +200,12 @@ func (d *depInspector) inspectDep(ctx context.Context, dep, version string) ([]c
 	go func() {
 		defer wg.Done()
 
-		caps, err := d.findCapabilities(ctx, dep, versionStr, pkgs)
+		capResult, err := d.findCapabilities(ctx, dep, versionStr, pkgs)
 		if err != nil {
 			errCh <- fmt.Errorf("finding capabilities of dependency: %w", err)
 			return
 		}
-		capsCh <- caps
+		capsCh <- capResult
 	}()
 	go func() {
 		defer wg.Done()
@@ -270,7 +270,7 @@ func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newV
 	fixedIssues, staleIssues, newIssues := processFindings(oldLintIssues, newLintIssues, func(a, b lintIssue) bool {
 		return issuesEqual(dep, a, b)
 	})
-	removedCaps, staleCaps, addedCaps := processFindings(oldCaps, newCaps, capsEqual)
+	removedCaps, staleCaps, addedCaps := processFindings(oldCaps.CapabilityInfo, newCaps.CapabilityInfo, capsEqual)
 
 	return &inspectResults{
 		fixedIssues: fixedIssues,

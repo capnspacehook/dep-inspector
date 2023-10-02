@@ -1,31 +1,95 @@
-<p>Findings for {{ .VersionStr }}:</p>
-
+<h3>Findings for {{ .VersionStr }}:</h3>
+{{- if len .Caps | not -}}
+<p>No capabilities were found</p>
+{{- else -}}
 <details>
     <summary>Capabilities</summary>
+    <div style="padding-left: 1ch">
+        {{- range $cap_name, $caps := .Caps -}}
+            <details><summary>{{ $cap_name }}</summary>
+            {{- range $pkg, $pkgCaps := capsByPkg $caps -}}
+                <div style="padding-left: 2ch">
+                    {{- if len $pkgCaps | gt 1 -}}
+                    <details><summary>{{ $pkg }}</summary>
+                    {{- else -}}
+                    <p style="margin: 0">{{ $pkg }}</p>
+                    {{- end -}}
+                        {{- range $finalCall, $finalCallCaps := capsByFinalCall $pkgCaps -}}
+                            <div style="padding-left: 1ch">
+                                {{- if len $finalCallCaps | lt 5 -}}
+                                <details><summary>{{ $finalCall }}</summary>
+                                {{- else -}}
+                                <p style="margin: 0">{{ $finalCall }}</p>
+                                {{- end -}}
+                                    <ul style="margin: 0">
+                                        {{- range $_, $cap := $finalCallCaps -}}
+                                            <li style="margin: 4px"><p style="margin: 0">
+                                                {{- range $i, $call := $cap.Path -}}
+                                                    {{- if ne $i 0 -}}
+                                                        &nbsp;
+                                                        {{- if $call.Site.Filename -}}
+                                                            <a href="{{ capPosToURL $call (prevCallName $cap.Path $i) }}" target="_blank"
+                                                                rel="noopener noreferrer">{{ $call.Site.Filename }}:{{ $call.Site.Line }}</a>:
+                                                        {{- end -}}
+                                                    {{- end -}}
+                                                    {{ $call.Name }}{{ if eq $i 0 }} ({{ capType $cap.CapabilityType }}){{ end }}<br>
+                                                {{- end -}}
+                                            </p></li>
+                                        {{- end -}}
+                                    </ul>
+                                {{- if len $finalCallCaps | lt 5 -}}
+                                </details>
+                                {{- end -}}
+                            </div>
+                        {{- end -}}
+                    {{ if len $pkgCaps | gt 1 }}
+                    </details>
+                    {{- end -}}
+                </div>
+            {{- end -}}
+            </details>  
+        {{- end -}}
+    </div>
 </details>
+{{- end -}}
 
+{{- if len .IssuePkgs | not -}}
+<p>No linter issues were found</p>
+{{- else -}}
 <details>
     <summary>Linter Issues</summary>
-    {{ range $pkg, $issues := .IssuePkgs }}
-    <div style="padding-left: 2ch">
-        <details>
-            <summary>{{ $.VersionStr }}/{{ $pkg }}</summary>
-            {{ range $linter, $issues := issuesByLinter $issues }}
-            <div style="padding-left: 4ch">
-                <details>
-                    <summary>{{ $linter }}</summary>
-                    <ul>
-                        {{ range $_, $issue := $issues }}
-                        <li><p>
-                            {{ $issue.Text }}<br>
-                            <a href="{{ posToURL $issue.Pos }}" target="_blank" rel="noopener noreferrer">{{ $issue.Pos.Filename }}:{{ $issue.Pos.Line }}</a>
-                        </p></li>
-                        {{ end }}
+    <div style="padding-left: 1ch">
+        {{- range $pkg, $pkgIssues := .IssuePkgs -}}
+            {{- if len $pkgIssues | lt 1 -}}
+            <details><summary>{{ $pkg }}</summary>
+            {{- else -}}
+            <p style="margin: 0">{{ $pkg }}</p>
+            {{- end -}}
+            {{- range $linter, $linterIssues := issuesByLinter $pkgIssues -}}
+                <div style="padding-left: 3ch">
+                    {{- if len $linterIssues | lt 10 -}}
+                    <details><summary>{{ $linter }}</summary>
+                    {{- else -}}
+                    <p style="margin: 0">{{ $linter }}</p>
+                    {{- end -}}
+                    <ul style="margin: 0">
+                        {{- range $_, $issue := $linterIssues -}}
+                        <li style="margin: 1ch"><p style="margin: 0">
+                            <a href="{{ issuePosToURL $issue.Pos }}" target="_blank"
+                                rel="noopener noreferrer">{{ $issue.Pos.Filename }}:{{ $issue.Pos.Line }}</a>:
+                            {{ $issue.Text }}
+                            </p></li>
+                        {{- end -}}
                     </ul>
-                </details>
-            </div>
-            {{ end }}
-        </details>
+                    {{- if len $linterIssues | lt 10 -}}
+                    </details>
+                    {{- end -}}
+                </div>
+                {{- end -}}
+            {{- if len $pkgIssues | lt 1 -}}
+            </details>
+            {{- end -}}
+        {{- end -}}
     </div>
-    {{ end }}
 </details>
+{{- end -}}

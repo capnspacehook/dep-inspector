@@ -19,7 +19,7 @@ func (d *depInspector) runGoCommand(ctx context.Context, args ...string) error {
 
 	cmd, errBuf := d.buildCommand(ctx, nil, env, args...)
 	if err := cmd.Run(); err != nil {
-		return formatCmdErr(err, errBuf)
+		return formatCmdErr(cmd, err, errBuf)
 	}
 	return nil
 }
@@ -27,7 +27,7 @@ func (d *depInspector) runGoCommand(ctx context.Context, args ...string) error {
 func (d *depInspector) runCommand(ctx context.Context, writer io.Writer, args ...string) error {
 	cmd, errBuf := d.buildCommand(ctx, writer, nil, args...)
 	if err := cmd.Run(); err != nil {
-		return formatCmdErr(err, errBuf)
+		return formatCmdErr(cmd, err, errBuf)
 	}
 	return nil
 }
@@ -52,10 +52,10 @@ func (d *depInspector) buildCommand(ctx context.Context, writer io.Writer, env [
 	return cmd, &errBuf
 }
 
-func formatCmdErr(err error, errBuf *bytes.Buffer) error {
+func formatCmdErr(cmd *exec.Cmd, err error, errBuf *bytes.Buffer) error {
 	var execErr *exec.ExitError
 	if errors.As(err, &execErr) {
-		return fmt.Errorf("%s\n%w", errBuf, err)
+		return fmt.Errorf("running %s: %s\n%w", cmd, errBuf, err)
 	}
 	return err
 }

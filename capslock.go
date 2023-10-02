@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -19,6 +20,7 @@ var capMaps embed.FS
 
 type capslockResult struct {
 	CapabilityInfo []capability
+	ModuleInfo     []capModule
 }
 
 type capability struct {
@@ -40,7 +42,12 @@ type callSite struct {
 	Column   string
 }
 
-func (d *depInspector) findCapabilities(ctx context.Context, dep, versionStr string, pkgs loadedPackages) ([]capability, error) {
+type capModule struct {
+	Path    string
+	Version string
+}
+
+func (d *depInspector) findCapabilities(ctx context.Context, dep, versionStr string, pkgs loadedPackages) (*capslockResult, error) {
 	depPkgs := []string{dep + "/..."}
 	var err error
 	if !d.inspectAllPkgs {
@@ -102,9 +109,49 @@ func (d *depInspector) findCapabilities(ctx context.Context, dep, versionStr str
 	if err := json.Unmarshal(output.Bytes(), &results); err != nil {
 		return nil, fmt.Errorf("decoding results from capslock: %w", err)
 	}
-	caps := results.CapabilityInfo
 
-	return caps, nil
+	slices.SortFunc(results.CapabilityInfo, func(a, b capability) int {
+		if a.Capability != b.Capability {
+			return strings.Compare(a.Capability, b.Capability)
+		}
+		if a.PackageDir != b.PackageDir {
+			return strings.Compare(a.PackageDir, b.PackageDir)
+		}
+		if a.CapabilityType != b.CapabilityType {
+			return strings.Compare(a.CapabilityType, b.CapabilityType)
+		}
+		if len(a.Path) != len(b.Path) {
+			if len(a.Path) < len(b.Path) {
+				return -1
+			}
+			return 1
+		}
+
+		for i := range a.Path {
+			if a.Path[i].Name != b.Path[i].Name {
+				return strings.Compare(a.Path[i].Name, b.Path[i].Name)
+			}
+			if a.Path[i].Site.Filename != b.Path[i].Site.Filename {
+				return strings.Compare(a.Path[i].Site.Filename, b.Path[i].Site.Filename)
+			}
+			if a.Path[i].Site.Line != b.Path[i].Site.Line {
+				if a.Path[i].Site.Line < b.Path[i].Site.Line {
+					return -1
+				}
+				return 1
+			}
+			if a.Path[i].Site.Column != b.Path[i].Site.Column {
+				if a.Path[i].Site.Column < b.Path[i].Site.Column {
+					return -1
+				}
+				return 1
+			}
+		}
+
+		return 0
+	})
+
+	return &results, nil
 }
 
 func capsEqual(a, b capability) bool {
