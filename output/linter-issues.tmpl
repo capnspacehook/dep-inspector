@@ -1,0 +1,33 @@
+{{- range $pkg, $pkgIssues := .Issues -}}
+    {{- $summarizePkg := gt (len $pkgIssues) 1 -}}
+    {{- if $summarizePkg -}}
+    <details><summary>{{ $pkg }} ({{ len $pkgIssues }})</summary>
+    {{- else -}}
+    <p style="margin: 0">{{ $pkg }}</p>
+    {{- end -}}
+        {{- range $linter, $linterIssues := getIssuesByLinter $pkgIssues -}}
+            <div style="padding-left: 3ch">
+                {{- $summarizeLinter := gt (len $linterIssues) 10 -}}
+                {{- if $summarizeLinter -}}
+                <details><summary>{{ $linter }} ({{ len $linterIssues }})</summary>
+                {{- else -}}
+                <p style="margin: 0">{{ $linter }}</p>
+                {{- end -}}
+                <ul style="margin: 0">
+                    {{- range $_, $issue := $linterIssues -}}
+                        <li style="margin: 1ch"><p style="margin: 0">
+                            <a href="{{ issuePosToURL $issue.Pos }}" target="_blank"
+                                rel="noopener noreferrer">{{ $issue.Pos.Filename }}:{{ $issue.Pos.Line }}</a>:
+                            {{ $issue.Text }}
+                        </p></li>
+                    {{- end -}}
+                </ul>
+                {{- if $summarizeLinter -}}
+                </details>
+                {{- end -}}
+            </div>
+        {{- end -}}
+    {{- if $summarizePkg -}}
+    </details>
+    {{- end -}}
+{{- end -}}

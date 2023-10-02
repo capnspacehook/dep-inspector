@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	_ "embed"
+	"embed"
 	"fmt"
 	"go/token"
 	"html/template"
@@ -23,17 +23,15 @@ import (
 	"golang.org/x/mod/module"
 )
 
-//go:embed output/single-html.tmpl
-var htmlTmpl string
+//go:embed output/*
+var tmplFS embed.FS
 
-type result struct {
+type singleDepResult struct {
 	Dep              string
 	VersionStr       string
 	ModuleRemoteURLs map[string]moduleURL
 
-	Caps      map[string][]capability
-	IssuePkgs map[string][]lintIssue
-	Totals    findingTotals
+	Findings findingResult
 }
 
 type moduleURL struct {
@@ -42,44 +40,85 @@ type moduleURL struct {
 	url         *url.URL
 }
 
-func (d *depInspector) formatHTMLOutput(ctx context.Context, dep, version string, capResult *capslockResult, issues []lintIssue, totals findingTotals) (io.Reader, error) {
-	local, err := os.MkdirTemp("", tempPrefix)
-	if err != nil {
-		return nil, fmt.Errorf("creating temporary directory: %w", err)
-	}
-	defer os.RemoveAll(local)
+type findingResult struct {
+	Caps   map[string][]capability
+	Issues map[string][]lintIssue
+	Totals findingTotals
+}
 
-	modURLs := make(map[string]moduleURL, len(capResult.ModuleInfo))
-	for _, modInfo := range capResult.ModuleInfo {
-		localPath := filepath.Join(local, strings.ReplaceAll(modInfo.Path, "/", "-"))
-		if err := os.Mkdir(localPath, 0o755); err != nil {
-			return nil, fmt.Errorf("creating directory: %w", err)
-		}
-		modURL, err := findModuleURL(modInfo.Path, modInfo.Version, localPath)
-		if err != nil {
-			return nil, err
-		}
-		modURLs[modInfo.Path] = modURL
-	}
-	capMods := maps.Keys(modURLs)
-
-	// create URL for stdlib
-	var verBuf bytes.Buffer
-	err = d.runCommand(ctx, &verBuf, "go", "version")
+func (d *depInspector) singleDepHTMLOutput(ctx context.Context, dep, version string, capResult *capslockResult, issues []lintIssue) (io.Reader, error) {
+	capMods, modURLs, err := findModuleURLs(capResult.ModuleInfo)
 	if err != nil {
 		return nil, err
 	}
-	re := regexp.MustCompile(`^go version (go\S+|devel \S+)`)
-	m := re.FindStringSubmatch(verBuf.String())
-	if len(m) != 2 {
-		return nil, fmt.Errorf("unknown Go version %q", verBuf.String())
-	}
-	goVer := m[1]
-	stdlibURL, err := url.Parse("https://github.com/golang/go")
+	goVer, stdlibURL, err := d.findStdlibURL(ctx)
 	if err != nil {
-		panic(err)
+		return nil, err
+	}
+	tmpl, err := loadTemplate("output/single-dep.tmpl", dep, capMods, modURLs, goVer, stdlibURL)
+	if err != nil {
+		return nil, err
 	}
 
+	res := &singleDepResult{
+		Dep:              dep,
+		VersionStr:       makeVersionStr(dep, version),
+		ModuleRemoteURLs: modURLs,
+		Findings:         prepareFindingResult(dep, capResult.CapabilityInfo, issues),
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, res); err != nil {
+		return nil, fmt.Errorf("error executing output template: %w", err)
+	}
+
+	return &buf, nil
+}
+
+type compareDepsResult struct {
+	Dep              string
+	OldVersionStr    string
+	NewVersionStr    string
+	ModuleRemoteURLs map[string]moduleURL
+
+	OldFindings  findingResult
+	SameFindings findingResult
+	NewFindings  findingResult
+}
+
+func (d *depInspector) compareDepsHTMLOutput(ctx context.Context, dep, oldVer, newVer string, results *inspectResults) (io.Reader, error) {
+	capMods, modURLs, err := findModuleURLs(results.capMods)
+	if err != nil {
+		return nil, err
+	}
+	goVer, stdlibURL, err := d.findStdlibURL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tmpl, err := loadTemplate("output/compare-deps.tmpl", dep, capMods, modURLs, goVer, stdlibURL)
+	if err != nil {
+		return nil, err
+	}
+
+	res := &compareDepsResult{
+		Dep:              dep,
+		OldVersionStr:    makeVersionStr(dep, oldVer),
+		NewVersionStr:    makeVersionStr(dep, newVer),
+		ModuleRemoteURLs: modURLs,
+		OldFindings:      prepareFindingResult(dep, results.removedCaps, results.fixedIssues),
+		SameFindings:     prepareFindingResult(dep, results.staleCaps, results.staleIssues),
+		NewFindings:      prepareFindingResult(dep, results.addedCaps, results.newIssues),
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, res); err != nil {
+		return nil, fmt.Errorf("error executing output template: %w", err)
+	}
+
+	return &buf, nil
+}
+
+func loadTemplate(tmplPath, dep string, capMods []string, modURLs map[string]moduleURL, goVer string, stdlibURL *url.URL) (*template.Template, error) {
 	funcMap := map[string]any{
 		"getCapsByPkg": func(caps []capability) map[string][]capability {
 			return lo.GroupBy(caps, func(cap capability) string {
@@ -156,35 +195,40 @@ func (d *depInspector) formatHTMLOutput(ctx context.Context, dep, version string
 		},
 	}
 
-	tmpl, err := template.New("output").Funcs(funcMap).Parse(htmlTmpl)
+	tmpl, err := template.ParseFS(tmplFS, tmplPath)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing output template: %w", err)
 	}
-
-	capNameCaps := lo.GroupBy(capResult.CapabilityInfo, func(cap capability) string {
-		capName := strings.ReplaceAll(strings.TrimPrefix(cap.Capability, "CAPABILITY_"), "_", " ")
-		return strings.Title(strings.ToLower(capName))
-	})
-
-	pkgIssues := lo.GroupBy(issues, func(issue lintIssue) string {
-		return path.Join(dep, path.Dir(issue.Pos.Filename))
-	})
-
-	res := &result{
-		Dep:              dep,
-		VersionStr:       makeVersionStr(dep, version),
-		ModuleRemoteURLs: modURLs,
-		Caps:             capNameCaps,
-		IssuePkgs:        pkgIssues,
-		Totals:           totals,
+	tmpl = tmpl.Funcs(funcMap)
+	tmpl, err = tmpl.ParseFS(tmplFS, "output/capabilities.tmpl", "output/linter-issues.tmpl", "output/totals.tmpl")
+	if err != nil {
+		return nil, fmt.Errorf("error parsing and associating output templates: %w", err)
 	}
 
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, res); err != nil {
-		return nil, fmt.Errorf("error executing output template: %w", err)
+	return tmpl, nil
+}
+
+func findModuleURLs(capMods []capModule) ([]string, map[string]moduleURL, error) {
+	local, err := os.MkdirTemp("", tempPrefix)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating temporary directory: %w", err)
+	}
+	defer os.RemoveAll(local)
+
+	modURLs := make(map[string]moduleURL, len(capMods))
+	for _, modInfo := range capMods {
+		localPath := filepath.Join(local, strings.ReplaceAll(modInfo.Path, "/", "-"))
+		if err := os.Mkdir(localPath, 0o755); err != nil {
+			return nil, nil, fmt.Errorf("creating directory: %w", err)
+		}
+		modURL, err := findModuleURL(modInfo.Path, modInfo.Version, localPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		modURLs[modInfo.Path] = modURL
 	}
 
-	return &buf, nil
+	return maps.Keys(modURLs), modURLs, nil
 }
 
 func findModuleURL(mod, version, localPath string) (moduleURL, error) {
@@ -221,6 +265,39 @@ func findModuleURL(mod, version, localPath string) (moduleURL, error) {
 		verIsCommit: verIsCommit,
 		url:         remoteURL,
 	}, nil
+}
+
+func (d *depInspector) findStdlibURL(ctx context.Context) (string, *url.URL, error) {
+	var verBuf bytes.Buffer
+	err := d.runCommand(ctx, &verBuf, "go", "version")
+	if err != nil {
+		return "", nil, err
+	}
+	re := regexp.MustCompile(`^go version (go\S+|devel \S+)`)
+	m := re.FindStringSubmatch(verBuf.String())
+	if len(m) != 2 {
+		return "", nil, fmt.Errorf("unknown Go version %q", verBuf.String())
+	}
+	goVer := m[1]
+	stdlibURL, err := url.Parse("https://github.com/golang/go")
+	if err != nil {
+		panic(err)
+	}
+
+	return goVer, stdlibURL, nil
+}
+
+func prepareFindingResult(dep string, caps []capability, issues []lintIssue) (f findingResult) {
+	f.Caps = lo.GroupBy(caps, func(cap capability) string {
+		capName := strings.ReplaceAll(strings.TrimPrefix(cap.Capability, "CAPABILITY_"), "_", " ")
+		return strings.Title(strings.ToLower(capName))
+	})
+	f.Issues = lo.GroupBy(issues, func(issue lintIssue) string {
+		return path.Join(dep, path.Dir(issue.Pos.Filename))
+	})
+	f.Totals = calculateTotals(caps, issues)
+
+	return f
 }
 
 func callSiteToURL(site callSite, modURL moduleURL, pkg string) string {

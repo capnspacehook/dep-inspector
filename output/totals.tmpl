@@ -1,0 +1,26 @@
+<p>Total Capabilities: {{ .Totals.TotalCaps }}</p>
+<table>
+    <tr>
+        <th>Capability name</th>
+        <th>Capabilities found</th>
+    </tr>
+    {{- range $name, $count := .Totals.Caps -}}
+    <tr>
+        <td>{{ $name }}</td>
+        <td>{{ $count }}</td>
+    </tr>
+    {{- end -}}
+</table>
+<p>Total Issues: {{ .Totals.TotalIssues }}</p>
+<table>
+    <tr>
+        <th>Linter name</th>
+        <th>Issues found</th>
+    </tr>
+    {{- range $name, $count := .Totals.Issues -}}
+    <tr>
+        <td>{{ $name }}</td>
+        <td>{{ $count }}</td>
+    </tr>
+    {{- end -}}
+</table>

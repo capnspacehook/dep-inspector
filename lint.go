@@ -294,7 +294,6 @@ func issuesEqual(dep string, a, b lintIssue) bool {
 func getDepRelPath(dep, path string) string {
 	depIdx := strings.Index(path, dep)
 	if depIdx == -1 {
-		log.Printf("could not find %s in path %s", dep, path)
 		return path
 	}
 	depVerIdx := depIdx + len(dep)

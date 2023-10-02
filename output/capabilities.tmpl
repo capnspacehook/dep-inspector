@@ -1,0 +1,48 @@
+{{- range $cap_name, $caps := .Caps -}}
+    <details><summary>{{ $cap_name }} ({{ len $caps }})</summary>
+        {{- $capsByPkg := getCapsByPkg $caps -}}
+        {{- range $pkg, $pkgCaps := $capsByPkg -}}
+            <div style="padding-left: 2ch">
+                {{- $capsByFinalCall := getCapsByFinalCall $pkgCaps -}}
+                {{- $summarizePkg := or (gt (len $capsByPkg) 1) (gt (len $capsByFinalCall) 10) -}}
+                {{- if $summarizePkg -}}
+                <details><summary>{{ $pkg }} ({{ len $pkgCaps }})</summary>
+                {{- else -}}
+                <p style="margin: 0">{{ $pkg }}</p>
+                {{- end -}}
+                    {{- range $finalCall, $finalCallCaps := $capsByFinalCall -}}
+                        <div style="padding-left: 1ch">
+                            {{- $summarizeCall := gt (len $finalCallCaps) 5 -}}
+                            {{- if $summarizeCall -}}
+                            <details><summary>{{ $finalCall }} ({{ len $finalCallCaps }})</summary>
+                            {{- else -}}
+                            <p style="margin: 0">{{ $finalCall }}</p>
+                            {{- end -}}
+                                <ul style="margin: 0">
+                                    {{- range $_, $cap := $finalCallCaps -}}
+                                        <li style="margin: 4px"><p style="margin: 0">
+                                            {{- range $i, $call := $cap.Path -}}
+                                                {{- if ne $i 0 -}}
+                                                    &nbsp;&nbsp;
+                                                    {{- if $call.Site.Filename -}}
+                                                        <a href="{{ capPosToURL $call (getPrevCallName $cap.Path $i) }}" target="_blank"
+                                                            rel="noopener noreferrer">{{ $call.Site.Filename }}:{{ $call.Site.Line }}</a>:&nbsp;
+                                                    {{- end -}}
+                                                {{- end -}}
+                                                {{ $call.Name }}{{ if eq $i 0 }} ({{ capType $cap.CapabilityType }}){{ end }}<br>
+                                            {{- end -}}
+                                        </p></li>
+                                    {{- end -}}
+                                </ul>
+                            {{- if $summarizeCall -}}
+                            </details>
+                            {{- end -}}
+                        </div>
+                    {{- end -}}
+                {{- if $summarizePkg -}}
+                </details>
+                {{- end -}}
+            </div>
+        {{- end -}}
+    </details>  
+{{- end -}}

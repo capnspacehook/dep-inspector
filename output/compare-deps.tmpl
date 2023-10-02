@@ -1,0 +1,52 @@
+<html>
+<style>
+table, th, td {
+  border:1px solid black;
+}
+</style>
+<body>
+<h2>Comparing {{ .OldVersionStr }} and {{ .NewVersionStr }}:</h2>
+<h3>Resolved findings:</h3>
+<details>
+    <summary>Capabilities</summary>
+    <div style="padding-left: 1ch">
+        {{- template "capabilities.tmpl" .OldFindings -}}
+    </div>
+</details>
+<details>
+    <summary>Linter Issues</summary>
+    <div style="padding-left: 1ch">
+        {{- template "linter-issues.tmpl" .OldFindings -}}
+    </div>
+</details>
+{{- template "totals.tmpl" .OldFindings -}}
+<h3>Same findings:</h3>
+<details>
+    <summary>Capabilities</summary>
+    <div style="padding-left: 1ch">
+        {{- template "capabilities.tmpl" .SameFindings -}}
+    </div>
+</details>
+<details>
+    <summary>Linter Issues</summary>
+    <div style="padding-left: 1ch">
+        {{- template "linter-issues.tmpl" .SameFindings -}}
+    </div>
+</details>
+{{- template "totals.tmpl" .SameFindings -}}
+<h3>New findings:</h3>
+<details>
+    <summary>Capabilities</summary>
+    <div style="padding-left: 1ch">
+        {{- template "capabilities.tmpl" .NewFindings -}}
+    </div>
+</details>
+<details>
+    <summary>Linter Issues</summary>
+    <div style="padding-left: 1ch">
+        {{- template "linter-issues.tmpl" .NewFindings -}}
+    </div>
+</details>
+{{- template "totals.tmpl" .NewFindings -}}
+</body>
+</html>

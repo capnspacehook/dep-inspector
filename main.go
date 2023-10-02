@@ -158,19 +158,16 @@ func (d *depInspector) inspectSingleDep(ctx context.Context, dep, version string
 	if err != nil {
 		return err
 	}
-	totals := calculateTotals(capResult.CapabilityInfo, lintIssues)
 
 	if d.htmlOutput {
-		r, err := d.formatHTMLOutput(ctx, dep, version, capResult, lintIssues, totals)
+		r, err := d.singleDepHTMLOutput(ctx, dep, version, capResult, lintIssues)
 		if err != nil {
 			return err
 		}
-
 		err = browser.OpenReader(r)
 		if err != nil {
 			return err
 		}
-
 		return nil
 	}
 
@@ -240,6 +237,19 @@ func (d *depInspector) compareDepVersions(ctx context.Context, dep, oldVer, newV
 		return err
 	}
 
+	if d.htmlOutput {
+		r, err := d.compareDepsHTMLOutput(ctx, dep, oldVer, newVer, results)
+		if err != nil {
+			return err
+		}
+
+		err = browser.OpenReader(r)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
 	printDepComparison(results)
 
 	return nil
@@ -250,6 +260,7 @@ type inspectResults struct {
 	staleIssues []lintIssue
 	newIssues   []lintIssue
 
+	capMods     []capModule
 	removedCaps []capability
 	staleCaps   []capability
 	addedCaps   []capability
@@ -274,10 +285,22 @@ func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newV
 	})
 	removedCaps, staleCaps, addedCaps := processFindings(oldCaps.CapabilityInfo, newCaps.CapabilityInfo, capsEqual)
 
+	capMods := append(oldCaps.ModuleInfo, newCaps.ModuleInfo...)
+	slices.SortFunc(capMods, func(a, b capModule) int {
+		if a.Path != b.Path {
+			return strings.Compare(a.Path, b.Path)
+		}
+		return 0
+	})
+	capMods = slices.CompactFunc(capMods, func(a, b capModule) bool {
+		return a.Path == b.Path
+	})
+
 	return &inspectResults{
 		fixedIssues: fixedIssues,
 		staleIssues: staleIssues,
 		newIssues:   newIssues,
+		capMods:     capMods,
 		removedCaps: removedCaps,
 		staleCaps:   staleCaps,
 		addedCaps:   addedCaps,

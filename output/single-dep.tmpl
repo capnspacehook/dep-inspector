@@ -1,0 +1,31 @@
+<html>
+<style>
+table, th, td {
+  border:1px solid black;
+}
+</style>
+<body>
+<h2>Findings for {{ .VersionStr }}:</h2>
+{{- if not (len .Findings.Caps) -}}
+<p>No capabilities were found</p>
+{{- else -}}
+<details>
+    <summary>Capabilities</summary>
+    <div style="padding-left: 1ch">
+        {{- template "capabilities.tmpl" .Findings -}}
+    </div>
+</details>
+{{- end -}}
+{{- if not (len .Findings.Issues) -}}
+<p>No linter issues were found</p>
+{{- else -}}
+<details>
+    <summary>Linter Issues</summary>
+    <div style="padding-left: 1ch">
+        {{- template "linter-issues.tmpl" .Findings -}}
+    </div>
+</details>
+{{- end -}}
+{{- template "totals.tmpl" .Findings -}}
+</body>
+</html>
