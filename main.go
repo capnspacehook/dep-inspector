@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/pkg/browser"
+	"github.com/samber/lo"
 	"golang.org/x/mod/modfile"
 )
 
@@ -157,9 +158,10 @@ func (d *depInspector) inspectSingleDep(ctx context.Context, dep, version string
 	if err != nil {
 		return err
 	}
+	totals := calculateTotals(capResult.CapabilityInfo, lintIssues)
 
 	if d.htmlOutput {
-		r, err := d.formatHTMLOutput(ctx, dep, version, capResult, lintIssues)
+		r, err := d.formatHTMLOutput(ctx, dep, version, capResult, lintIssues, totals)
 		if err != nil {
 			return err
 		}
@@ -339,9 +341,9 @@ func (d *depInspector) setupDepVersion(ctx context.Context, versionStr string) e
 
 func processFindings[T any](oldVerFindings, newVerFindings []T, equal func(a, b T) bool) ([]T, []T, []T) {
 	var (
-		fixedIssues []T
-		staleIssues []T
-		newIssues   []T
+		removedFindings []T
+		staleFindings   []T
+		newFindings     []T
 	)
 
 	for _, issue := range oldVerFindings {
@@ -349,9 +351,9 @@ func processFindings[T any](oldVerFindings, newVerFindings []T, equal func(a, b 
 			return equal(issue, issue2)
 		})
 		if idx == -1 {
-			fixedIssues = append(fixedIssues, issue)
+			removedFindings = append(removedFindings, issue)
 		} else {
-			staleIssues = append(staleIssues, newVerFindings[idx])
+			staleFindings = append(staleFindings, newVerFindings[idx])
 		}
 	}
 	for _, issue := range newVerFindings {
@@ -359,11 +361,41 @@ func processFindings[T any](oldVerFindings, newVerFindings []T, equal func(a, b 
 			return equal(issue, issue2)
 		})
 		if idx == -1 {
-			newIssues = append(newIssues, issue)
+			newFindings = append(newFindings, issue)
 		}
 	}
 
-	return fixedIssues, staleIssues, newIssues
+	return removedFindings, staleFindings, newFindings
+}
+
+type findingTotals struct {
+	TotalCaps   int
+	DirectCaps  int
+	Caps        map[string]int
+	TotalIssues int
+	Issues      map[string]int
+}
+
+func calculateTotals(caps []capability, issues []lintIssue) findingTotals {
+	t := findingTotals{
+		TotalCaps:   len(caps),
+		TotalIssues: len(issues),
+	}
+
+	t.DirectCaps = lo.CountBy(caps, func(cap capability) bool {
+		return cap.CapabilityType == "CAPABILITY_TYPE_DIRECT"
+	})
+	t.Caps = lo.CountValuesBy(caps, func(cap capability) string {
+		capName := strings.ReplaceAll(strings.TrimPrefix(cap.Capability, "CAPABILITY_"), "_", " ")
+		return strings.Title(strings.ToLower(capName))
+	})
+	t.Issues = lo.CountValuesBy(issues, func(issue lintIssue) string {
+		if strings.HasPrefix(issue.FromLinter, "staticcheck") {
+			return "staticcheck"
+		}
+		return issue.FromLinter
+	})
+	return t
 }
 
 func makeVersionStr(dep, version string) string {

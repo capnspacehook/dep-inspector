@@ -33,6 +33,7 @@ type result struct {
 
 	Caps      map[string][]capability
 	IssuePkgs map[string][]lintIssue
+	Totals    findingTotals
 }
 
 type moduleURL struct {
@@ -41,7 +42,7 @@ type moduleURL struct {
 	url         *url.URL
 }
 
-func (d *depInspector) formatHTMLOutput(ctx context.Context, dep, version string, capResult *capslockResult, issues []lintIssue) (io.Reader, error) {
+func (d *depInspector) formatHTMLOutput(ctx context.Context, dep, version string, capResult *capslockResult, issues []lintIssue, totals findingTotals) (io.Reader, error) {
 	local, err := os.MkdirTemp("", tempPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("creating temporary directory: %w", err)
@@ -80,12 +81,12 @@ func (d *depInspector) formatHTMLOutput(ctx context.Context, dep, version string
 	}
 
 	funcMap := map[string]any{
-		"capsByPkg": func(caps []capability) map[string][]capability {
+		"getCapsByPkg": func(caps []capability) map[string][]capability {
 			return lo.GroupBy(caps, func(cap capability) string {
 				return cap.PackageDir
 			})
 		},
-		"capsByFinalCall": func(caps []capability) map[string][]capability {
+		"getCapsByFinalCall": func(caps []capability) map[string][]capability {
 			return lo.GroupBy(caps, func(cap capability) string {
 				return cap.Path[len(cap.Path)-1].Name
 			})
@@ -96,12 +97,12 @@ func (d *depInspector) formatHTMLOutput(ctx context.Context, dep, version string
 			}
 			return "Transitive"
 		},
-		"issuesByLinter": func(issues []lintIssue) map[string][]lintIssue {
+		"getIssuesByLinter": func(issues []lintIssue) map[string][]lintIssue {
 			return lo.GroupBy(issues, func(issue lintIssue) string {
 				return issue.FromLinter
 			})
 		},
-		"prevCallName": func(calls []functionCall, idx int) string {
+		"getPrevCallName": func(calls []functionCall, idx int) string {
 			return calls[idx-1].Name
 		},
 		"capPosToURL": func(call functionCall, prevCallName string) (string, error) {
@@ -175,6 +176,7 @@ func (d *depInspector) formatHTMLOutput(ctx context.Context, dep, version string
 		ModuleRemoteURLs: modURLs,
 		Caps:             capNameCaps,
 		IssuePkgs:        pkgIssues,
+		Totals:           totals,
 	}
 
 	var buf bytes.Buffer
