@@ -15,7 +15,6 @@ import (
 	"sync"
 
 	"github.com/pkg/browser"
-	"github.com/samber/lo"
 	"golang.org/x/mod/modfile"
 )
 
@@ -177,7 +176,7 @@ func (d *depInspector) inspectSingleDep(ctx context.Context, dep, version string
 	return nil
 }
 
-func (d *depInspector) inspectDep(ctx context.Context, dep, version string) (*capslockResult, []lintIssue, error) {
+func (d *depInspector) inspectDep(ctx context.Context, dep, version string) (*capslockResult, []*lintIssue, error) {
 	versionStr := makeVersionStr(dep, version)
 	if err := d.setupDepVersion(ctx, versionStr); err != nil {
 		return nil, nil, fmt.Errorf("setting up dependency: %w", err)
@@ -190,7 +189,7 @@ func (d *depInspector) inspectDep(ctx context.Context, dep, version string) (*ca
 
 	var (
 		capsCh   = make(chan *capslockResult, 1)
-		issuesCh = make(chan []lintIssue, 1)
+		issuesCh = make(chan []*lintIssue, 1)
 		errCh    = make(chan error, 2)
 		wg       sync.WaitGroup
 	)
@@ -256,14 +255,14 @@ func (d *depInspector) compareDepVersions(ctx context.Context, dep, oldVer, newV
 }
 
 type inspectResults struct {
-	fixedIssues []lintIssue
-	staleIssues []lintIssue
-	newIssues   []lintIssue
+	fixedIssues []*lintIssue
+	staleIssues []*lintIssue
+	newIssues   []*lintIssue
 
 	capMods     []capModule
-	removedCaps []capability
-	staleCaps   []capability
-	addedCaps   []capability
+	removedCaps []*capability
+	sameCaps    []*capability
+	addedCaps   []*capability
 }
 
 func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newVer string) (*inspectResults, error) {
@@ -280,7 +279,7 @@ func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newV
 	}
 
 	// process linter issues and capabilities
-	fixedIssues, staleIssues, newIssues := processFindings(oldLintIssues, newLintIssues, func(a, b lintIssue) bool {
+	fixedIssues, staleIssues, newIssues := processFindings(oldLintIssues, newLintIssues, func(a, b *lintIssue) bool {
 		return issuesEqual(dep, a, b)
 	})
 	removedCaps, staleCaps, addedCaps := processFindings(oldCaps.CapabilityInfo, newCaps.CapabilityInfo, capsEqual)
@@ -302,7 +301,7 @@ func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newV
 		newIssues:   newIssues,
 		capMods:     capMods,
 		removedCaps: removedCaps,
-		staleCaps:   staleCaps,
+		sameCaps:    staleCaps,
 		addedCaps:   addedCaps,
 	}, nil
 }
@@ -389,36 +388,6 @@ func processFindings[T any](oldVerFindings, newVerFindings []T, equal func(a, b 
 	}
 
 	return removedFindings, staleFindings, newFindings
-}
-
-type findingTotals struct {
-	TotalCaps   int
-	DirectCaps  int
-	Caps        map[string]int
-	TotalIssues int
-	Issues      map[string]int
-}
-
-func calculateTotals(caps []capability, issues []lintIssue) findingTotals {
-	t := findingTotals{
-		TotalCaps:   len(caps),
-		TotalIssues: len(issues),
-	}
-
-	t.DirectCaps = lo.CountBy(caps, func(cap capability) bool {
-		return cap.CapabilityType == "CAPABILITY_TYPE_DIRECT"
-	})
-	t.Caps = lo.CountValuesBy(caps, func(cap capability) string {
-		capName := strings.ReplaceAll(strings.TrimPrefix(cap.Capability, "CAPABILITY_"), "_", " ")
-		return strings.Title(strings.ToLower(capName))
-	})
-	t.Issues = lo.CountValuesBy(issues, func(issue lintIssue) string {
-		if strings.HasPrefix(issue.FromLinter, "staticcheck") {
-			return "staticcheck"
-		}
-		return issue.FromLinter
-	})
-	return t
 }
 
 func makeVersionStr(dep, version string) string {

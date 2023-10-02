@@ -41,12 +41,12 @@ type moduleURL struct {
 }
 
 type findingResult struct {
-	Caps   map[string][]capability
-	Issues map[string][]lintIssue
+	Caps   map[string][]*capability
+	Issues map[string][]*lintIssue
 	Totals findingTotals
 }
 
-func (d *depInspector) singleDepHTMLOutput(ctx context.Context, dep, version string, capResult *capslockResult, issues []lintIssue) (io.Reader, error) {
+func (d *depInspector) singleDepHTMLOutput(ctx context.Context, dep, version string, capResult *capslockResult, issues []*lintIssue) (io.Reader, error) {
 	capMods, modURLs, err := findModuleURLs(capResult.ModuleInfo)
 	if err != nil {
 		return nil, err
@@ -84,6 +84,7 @@ type compareDepsResult struct {
 	OldFindings  findingResult
 	SameFindings findingResult
 	NewFindings  findingResult
+	Totals       findingTotals
 }
 
 func (d *depInspector) compareDepsHTMLOutput(ctx context.Context, dep, oldVer, newVer string, results *inspectResults) (io.Reader, error) {
@@ -106,9 +107,10 @@ func (d *depInspector) compareDepsHTMLOutput(ctx context.Context, dep, oldVer, n
 		NewVersionStr:    makeVersionStr(dep, newVer),
 		ModuleRemoteURLs: modURLs,
 		OldFindings:      prepareFindingResult(dep, results.removedCaps, results.fixedIssues),
-		SameFindings:     prepareFindingResult(dep, results.staleCaps, results.staleIssues),
+		SameFindings:     prepareFindingResult(dep, results.sameCaps, results.staleIssues),
 		NewFindings:      prepareFindingResult(dep, results.addedCaps, results.newIssues),
 	}
+	buildCombinedTotals(res)
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, res); err != nil {
@@ -120,13 +122,13 @@ func (d *depInspector) compareDepsHTMLOutput(ctx context.Context, dep, oldVer, n
 
 func loadTemplate(tmplPath, dep string, capMods []string, modURLs map[string]moduleURL, goVer string, stdlibURL *url.URL) (*template.Template, error) {
 	funcMap := map[string]any{
-		"getCapsByPkg": func(caps []capability) map[string][]capability {
-			return lo.GroupBy(caps, func(cap capability) string {
+		"getCapsByPkg": func(caps []*capability) map[string][]*capability {
+			return lo.GroupBy(caps, func(cap *capability) string {
 				return cap.PackageDir
 			})
 		},
-		"getCapsByFinalCall": func(caps []capability) map[string][]capability {
-			return lo.GroupBy(caps, func(cap capability) string {
+		"getCapsByFinalCall": func(caps []*capability) map[string][]*capability {
+			return lo.GroupBy(caps, func(cap *capability) string {
 				return cap.Path[len(cap.Path)-1].Name
 			})
 		},
@@ -136,8 +138,8 @@ func loadTemplate(tmplPath, dep string, capMods []string, modURLs map[string]mod
 			}
 			return "Transitive"
 		},
-		"getIssuesByLinter": func(issues []lintIssue) map[string][]lintIssue {
-			return lo.GroupBy(issues, func(issue lintIssue) string {
+		"getIssuesByLinter": func(issues []*lintIssue) map[string][]*lintIssue {
+			return lo.GroupBy(issues, func(issue *lintIssue) string {
 				return issue.FromLinter
 			})
 		},
@@ -192,6 +194,13 @@ func loadTemplate(tmplPath, dep string, capMods []string, modURLs map[string]mod
 			// no need to pass the package here, the filenames already
 			// have the package prefixed
 			return callSiteToURL(site, modURLs[dep], "")
+		},
+		"formatDelta": func(delta int) string {
+			deltaStr := strconv.Itoa(delta)
+			if delta >= 0 {
+				deltaStr = "+" + deltaStr
+			}
+			return deltaStr
 		},
 	}
 
@@ -287,12 +296,12 @@ func (d *depInspector) findStdlibURL(ctx context.Context) (string, *url.URL, err
 	return goVer, stdlibURL, nil
 }
 
-func prepareFindingResult(dep string, caps []capability, issues []lintIssue) (f findingResult) {
-	f.Caps = lo.GroupBy(caps, func(cap capability) string {
+func prepareFindingResult(dep string, caps []*capability, issues []*lintIssue) (f findingResult) {
+	f.Caps = lo.GroupBy(caps, func(cap *capability) string {
 		capName := strings.ReplaceAll(strings.TrimPrefix(cap.Capability, "CAPABILITY_"), "_", " ")
 		return strings.Title(strings.ToLower(capName))
 	})
-	f.Issues = lo.GroupBy(issues, func(issue lintIssue) string {
+	f.Issues = lo.GroupBy(issues, func(issue *lintIssue) string {
 		return path.Join(dep, path.Dir(issue.Pos.Filename))
 	})
 	f.Totals = calculateTotals(caps, issues)

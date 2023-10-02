@@ -19,7 +19,7 @@ import (
 var capMaps embed.FS
 
 type capslockResult struct {
-	CapabilityInfo []capability
+	CapabilityInfo []*capability
 	ModuleInfo     []capModule
 }
 
@@ -110,7 +110,7 @@ func (d *depInspector) findCapabilities(ctx context.Context, dep, versionStr str
 		return nil, fmt.Errorf("decoding results from capslock: %w", err)
 	}
 
-	slices.SortFunc(results.CapabilityInfo, func(a, b capability) int {
+	slices.SortFunc(results.CapabilityInfo, func(a, b *capability) int {
 		if a.Capability != b.Capability {
 			return strings.Compare(a.Capability, b.Capability)
 		}
@@ -154,7 +154,7 @@ func (d *depInspector) findCapabilities(ctx context.Context, dep, versionStr str
 	return &results, nil
 }
 
-func capsEqual(a, b capability) bool {
+func capsEqual(a, b *capability) bool {
 	if a.PackageDir != b.PackageDir {
 		return false
 	}

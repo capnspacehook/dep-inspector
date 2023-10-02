@@ -11,9 +11,9 @@ func printDepComparison(results *inspectResults) {
 		fmt.Println("removed capabilities:")
 		printCaps(results.removedCaps)
 	}
-	if len(results.staleCaps) > 0 {
+	if len(results.sameCaps) > 0 {
 		fmt.Println("stale capabilities:")
-		printCaps(results.staleCaps)
+		printCaps(results.sameCaps)
 	}
 	if len(results.addedCaps) > 0 {
 		fmt.Println("added capabilities:")
@@ -21,7 +21,7 @@ func printDepComparison(results *inspectResults) {
 	}
 	fmt.Printf("total:\nremoved capabilities: %d\nstale capabilities:   %d\nadded capabilities:   %d\n",
 		len(results.removedCaps),
-		len(results.staleCaps),
+		len(results.sameCaps),
 		len(results.addedCaps),
 	)
 
@@ -45,7 +45,7 @@ func printDepComparison(results *inspectResults) {
 	)
 }
 
-func printCaps(caps []capability) {
+func printCaps(caps []*capability) {
 	for _, cap := range caps {
 		fmt.Printf("%s: %s\n", cap.Capability, cap.CapabilityType)
 		for i, call := range cap.Path {
@@ -70,7 +70,7 @@ func printCaps(caps []capability) {
 	}
 }
 
-func printLinterIssues(issues []lintIssue) {
+func printLinterIssues(issues []*lintIssue) {
 	for _, issue := range issues {
 		srcLines := strings.Join(issue.SourceLines, "\n")
 

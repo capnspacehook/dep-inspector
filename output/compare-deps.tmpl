@@ -6,34 +6,6 @@ table, th, td {
 </style>
 <body>
 <h2>Comparing {{ .OldVersionStr }} and {{ .NewVersionStr }}:</h2>
-<h3>Resolved findings:</h3>
-<details>
-    <summary>Capabilities</summary>
-    <div style="padding-left: 1ch">
-        {{- template "capabilities.tmpl" .OldFindings -}}
-    </div>
-</details>
-<details>
-    <summary>Linter Issues</summary>
-    <div style="padding-left: 1ch">
-        {{- template "linter-issues.tmpl" .OldFindings -}}
-    </div>
-</details>
-{{- template "totals.tmpl" .OldFindings -}}
-<h3>Same findings:</h3>
-<details>
-    <summary>Capabilities</summary>
-    <div style="padding-left: 1ch">
-        {{- template "capabilities.tmpl" .SameFindings -}}
-    </div>
-</details>
-<details>
-    <summary>Linter Issues</summary>
-    <div style="padding-left: 1ch">
-        {{- template "linter-issues.tmpl" .SameFindings -}}
-    </div>
-</details>
-{{- template "totals.tmpl" .SameFindings -}}
 <h3>New findings:</h3>
 <details>
     <summary>Capabilities</summary>
@@ -47,6 +19,36 @@ table, th, td {
         {{- template "linter-issues.tmpl" .NewFindings -}}
     </div>
 </details>
-{{- template "totals.tmpl" .NewFindings -}}
+{{- template "totals.tmpl" .NewFindings.Totals -}}
+<h3>Same findings:</h3>
+<details>
+    <summary>Capabilities</summary>
+    <div style="padding-left: 1ch">
+        {{- template "capabilities.tmpl" .SameFindings -}}
+    </div>
+</details>
+<details>
+    <summary>Linter Issues</summary>
+    <div style="padding-left: 1ch">
+        {{- template "linter-issues.tmpl" .SameFindings -}}
+    </div>
+</details>
+{{- template "totals.tmpl" .SameFindings.Totals -}}
+<h3>Resolved findings:</h3>
+<details>
+    <summary>Capabilities</summary>
+    <div style="padding-left: 1ch">
+        {{- template "capabilities.tmpl" .OldFindings -}}
+    </div>
+</details>
+<details>
+    <summary>Linter Issues</summary>
+    <div style="padding-left: 1ch">
+        {{- template "linter-issues.tmpl" .OldFindings -}}
+    </div>
+</details>
+{{- template "totals.tmpl" .OldFindings.Totals -}}
+<h3>Total findings:</h3>
+{{- template "totals.tmpl" .Totals -}}
 </body>
 </html>

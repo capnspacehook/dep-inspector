@@ -1,26 +1,26 @@
-<p>Total Capabilities: {{ .Totals.TotalCaps }}</p>
+<p>Total Capabilities: {{ .TotalCaps }}</p>
 <table>
     <tr>
         <th>Capability name</th>
         <th>Capabilities found</th>
     </tr>
-    {{- range $name, $count := .Totals.Caps -}}
+    {{- range $name, $count := .Caps -}}
     <tr>
         <td>{{ $name }}</td>
-        <td>{{ $count }}</td>
+        <td>{{ $count }}{{ if $.HasDeltas }} ({{ formatDelta (index $.CapDeltas $name) }}){{ end }}</td>
     </tr>
     {{- end -}}
 </table>
-<p>Total Issues: {{ .Totals.TotalIssues }}</p>
+<p>Total Issues: {{ .TotalIssues }}</p>
 <table>
     <tr>
         <th>Linter name</th>
         <th>Issues found</th>
     </tr>
-    {{- range $name, $count := .Totals.Issues -}}
+    {{- range $name, $count := .Issues -}}
     <tr>
         <td>{{ $name }}</td>
-        <td>{{ $count }}</td>
+        <td>{{ $count }}{{ if $.HasDeltas }} ({{ formatDelta (index $.IssueDeltas $name) }}){{ end }}</td>
     </tr>
     {{- end -}}
 </table>

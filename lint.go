@@ -23,7 +23,7 @@ const golangciCfgName = ".golangci.yml"
 var golangciCfgContents []byte
 
 type golangciResult struct {
-	Issues []lintIssue
+	Issues []*lintIssue
 }
 
 type lintIssue struct {
@@ -33,7 +33,7 @@ type lintIssue struct {
 	Pos         token.Position
 }
 
-func (d *depInspector) lintDepVersion(ctx context.Context, dep, versionStr string, pkgs loadedPackages) ([]lintIssue, error) {
+func (d *depInspector) lintDepVersion(ctx context.Context, dep, versionStr string, pkgs loadedPackages) ([]*lintIssue, error) {
 	var dirs []string
 	for _, pkg := range pkgs {
 		if d.inspectAllPkgs {
@@ -56,7 +56,7 @@ func (d *depInspector) lintDepVersion(ctx context.Context, dep, versionStr strin
 	}
 
 	var (
-		issuesCh = make(chan []lintIssue, 2)
+		issuesCh = make(chan []*lintIssue, 2)
 		errCh    = make(chan error, 2)
 		wg       sync.WaitGroup
 	)
@@ -98,7 +98,7 @@ func (d *depInspector) lintDepVersion(ctx context.Context, dep, versionStr strin
 
 	// sort issues by linter and file
 	issues := append(<-issuesCh, <-issuesCh...)
-	slices.SortFunc(issues, func(a, b lintIssue) int {
+	slices.SortFunc(issues, func(a, b *lintIssue) int {
 		if a.FromLinter != b.FromLinter {
 			return strings.Compare(a.FromLinter, b.FromLinter)
 		}
@@ -138,7 +138,7 @@ func (d *depInspector) lintDepVersion(ctx context.Context, dep, versionStr strin
 	return issues, nil
 }
 
-func (d *depInspector) golangciLint(ctx context.Context, dirs []string) ([]lintIssue, error) {
+func (d *depInspector) golangciLint(ctx context.Context, dirs []string) ([]*lintIssue, error) {
 	// write embedded golangci-lint config to a temporary file to it can
 	// be used by golangci-lint
 	cfgDir, err := os.MkdirTemp("", tempPrefix)
@@ -185,7 +185,7 @@ type staticcheckPosition struct {
 	Column int
 }
 
-func (d *depInspector) staticcheckLint(ctx context.Context, dirs []string) ([]lintIssue, error) {
+func (d *depInspector) staticcheckLint(ctx context.Context, dirs []string) ([]*lintIssue, error) {
 	var lintBuf bytes.Buffer
 	cmd := []string{"staticcheck", "-checks=SA1*,SA2*,SA4*,SA5*,SA9*", "-f=json", "-tests=false"}
 	cmd = append(cmd, dirs...)
@@ -209,9 +209,9 @@ func (d *depInspector) staticcheckLint(ctx context.Context, dirs []string) ([]li
 		sIssues = append(sIssues, issue)
 	}
 
-	issues := make([]lintIssue, len(sIssues))
+	issues := make([]*lintIssue, len(sIssues))
 	for i, sIssue := range sIssues {
-		issue := lintIssue{
+		issue := &lintIssue{
 			FromLinter: "staticcheck " + sIssue.Code,
 			Text:       trimLinterMsg(sIssue.Message),
 			Pos: token.Position{
@@ -259,7 +259,7 @@ func getSrcLinesFromFile(path string, startLine, endLine int) ([]string, error) 
 	return srcLines, nil
 }
 
-func issuesEqual(dep string, a, b lintIssue) bool {
+func issuesEqual(dep string, a, b *lintIssue) bool {
 	if a.FromLinter != b.FromLinter || a.Text != b.Text {
 		return false
 	}

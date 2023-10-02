@@ -1,5 +1,5 @@
 {{- range $pkg, $pkgIssues := .Issues -}}
-    {{- $summarizePkg := gt (len $pkgIssues) 1 -}}
+    {{- $summarizePkg := gt (len $.Issues) 1 -}}
     {{- if $summarizePkg -}}
     <details><summary>{{ $pkg }} ({{ len $pkgIssues }})</summary>
     {{- else -}}
