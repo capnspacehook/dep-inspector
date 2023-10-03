@@ -19,6 +19,8 @@ import (
 
 	"github.com/Masterminds/vcs"
 	"github.com/samber/lo"
+	"github.com/tdewolff/minify/v2"
+	"github.com/tdewolff/minify/v2/html"
 	"golang.org/x/exp/maps"
 	"golang.org/x/mod/module"
 )
@@ -67,12 +69,7 @@ func (d *depInspector) singleDepHTMLOutput(ctx context.Context, dep, version str
 		Findings:         prepareFindingResult(dep, capResult.CapabilityInfo, issues),
 	}
 
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, res); err != nil {
-		return nil, fmt.Errorf("error executing output template: %w", err)
-	}
-
-	return &buf, nil
+	return executeTemplate(tmpl, res)
 }
 
 type compareDepsResult struct {
@@ -112,12 +109,7 @@ func (d *depInspector) compareDepsHTMLOutput(ctx context.Context, dep, oldVer, n
 	}
 	buildCombinedTotals(res)
 
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, res); err != nil {
-		return nil, fmt.Errorf("error executing output template: %w", err)
-	}
-
-	return &buf, nil
+	return executeTemplate(tmpl, res)
 }
 
 func loadTemplate(tmplPath, dep string, capMods []string, modURLs map[string]moduleURL, goVer string, stdlibURL *url.URL) (*template.Template, error) {
@@ -307,6 +299,21 @@ func prepareFindingResult(dep string, caps []*capability, issues []*lintIssue) (
 	f.Totals = calculateTotals(caps, issues)
 
 	return f
+}
+
+func executeTemplate(tmpl *template.Template, data any) (io.Reader, error) {
+	var buf bytes.Buffer
+	min := minify.New()
+	min.AddFunc("text/html", html.Minify)
+	w := min.Writer("text/html", &buf)
+	if err := tmpl.Execute(w, data); err != nil {
+		return nil, fmt.Errorf("error executing output template: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return nil, fmt.Errorf("error minifying HTML output: %w", err)
+	}
+
+	return &buf, nil
 }
 
 func callSiteToURL(site callSite, modURL moduleURL, pkg string) string {
