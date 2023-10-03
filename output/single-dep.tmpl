@@ -6,9 +6,7 @@ table, th, td {
 </style>
 <body>
 <h2>Findings for {{ .VersionStr }}:</h2>
-{{- if not (len .Findings.Caps) -}}
-<p>No capabilities were found</p>
-{{- else -}}
+{{- if .Findings.Totals.TotalCaps -}}
 <details>
     <summary>Capabilities</summary>
     <div style="padding-left: 1ch">
@@ -16,9 +14,7 @@ table, th, td {
     </div>
 </details>
 {{- end -}}
-{{- if not (len .Findings.Issues) -}}
-<p>No linter issues were found</p>
-{{- else -}}
+{{- if .Findings.Totals.TotalIssues -}}
 <details>
     <summary>Linter Issues</summary>
     <div style="padding-left: 1ch">

@@ -9,46 +9,58 @@ table, th, td {
 <h3>Total findings:</h3>
 {{- template "totals.tmpl" .Totals -}}
 <h3>New findings:</h3>
+{{- if .NewFindings.Totals.TotalCaps -}}
 <details>
     <summary>Capabilities</summary>
     <div style="padding-left: 1ch">
         {{- template "capabilities.tmpl" .NewFindings -}}
     </div>
 </details>
+{{- end -}}
+{{- if .NewFindings.Totals.TotalIssues -}}
 <details>
     <summary>Linter Issues</summary>
     <div style="padding-left: 1ch">
         {{- template "linter-issues.tmpl" .NewFindings -}}
     </div>
 </details>
+{{- end -}}
 {{- template "totals.tmpl" .NewFindings.Totals -}}
 <h3>Same findings:</h3>
+{{- if .SameFindings.Totals.TotalCaps -}}
 <details>
     <summary>Capabilities</summary>
     <div style="padding-left: 1ch">
         {{- template "capabilities.tmpl" .SameFindings -}}
     </div>
 </details>
+{{- end -}}
+{{- if .SameFindings.Totals.TotalIssues -}}
 <details>
     <summary>Linter Issues</summary>
     <div style="padding-left: 1ch">
         {{- template "linter-issues.tmpl" .SameFindings -}}
     </div>
 </details>
+{{- end -}}
 {{- template "totals.tmpl" .SameFindings.Totals -}}
 <h3>Resolved findings:</h3>
+{{- if .OldFindings.Totals.TotalCaps -}}
 <details>
     <summary>Capabilities</summary>
     <div style="padding-left: 1ch">
         {{- template "capabilities.tmpl" .OldFindings -}}
     </div>
 </details>
+{{- end -}}
+{{- if .OldFindings.Totals.TotalIssues -}}
 <details>
     <summary>Linter Issues</summary>
     <div style="padding-left: 1ch">
         {{- template "linter-issues.tmpl" .OldFindings -}}
     </div>
 </details>
+{{- end -}}
 {{- template "totals.tmpl" .OldFindings.Totals -}}
 </body>
 </html>
