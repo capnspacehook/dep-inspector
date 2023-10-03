@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/samber/lo"
@@ -61,18 +62,21 @@ func buildCombinedTotals(r *compareDepsResult) {
 
 func currentTotals(rmFindings, sameFindings, newFindings map[string]int) (int, map[string]int, map[string]int) {
 	grandTotal := 0
-	currentCapTotals := maps.Clone(sameFindings)
-	deltaCapTotals := make(map[string]int, len(sameFindings)+len(newFindings))
+	currentTotalFindings := maps.Clone(sameFindings)
+	deltaTotalFindings := make(map[string]int, len(sameFindings)+len(newFindings))
 
-	for capName, newTotal := range newFindings {
-		total, ok := currentCapTotals[capName]
-		deltaCapTotals[capName] = total + newTotal - rmFindings[capName]
-		if ok {
-			total += newTotal
-		}
-		currentCapTotals[capName] = total
+	allNames := append(maps.Keys(rmFindings), maps.Keys(sameFindings)...)
+	allNames = append(allNames, maps.Keys(newFindings)...)
+	slices.Sort(allNames)
+	allNames = slices.Compact(allNames)
+
+	for _, name := range allNames {
+		total := sameFindings[name] + newFindings[name]
+
+		currentTotalFindings[name] = total
+		deltaTotalFindings[name] = newFindings[name] - rmFindings[name]
 		grandTotal += total
 	}
 
-	return grandTotal, currentCapTotals, deltaCapTotals
+	return grandTotal, currentTotalFindings, deltaTotalFindings
 }
