@@ -64,9 +64,7 @@ linters-settings:
       - composites
   reassign:
     patterns:
-      # TODO: add stdlib vars
-      - "EOF"
-      - "Err.*"
+      - ".*"
   revive:
     rules:
       - name: blank-imports
