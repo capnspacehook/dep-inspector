@@ -16,7 +16,7 @@
                 <ul style="margin: 0">
                     {{- range $_, $issue := $linterIssues -}}
                         <li style="margin: 1ch"><p style="margin: 0">
-                            <a href="{{ issuePosToURL $issue.Pos }}" target="_blank"
+                            <a href="{{ issuePosToURL $issue.Pos $.ModURLs }}" target="_blank"
                                 rel="noopener noreferrer">{{ $issue.Pos.Filename }}:{{ $issue.Pos.Line }}</a>:
                             {{ $issue.Text }}
                         </p></li>

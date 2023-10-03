@@ -259,7 +259,8 @@ type inspectResults struct {
 	staleIssues []*lintIssue
 	newIssues   []*lintIssue
 
-	capMods     []capModule
+	oldCapMods  []capModule
+	newCapMods  []capModule
 	removedCaps []*capability
 	sameCaps    []*capability
 	addedCaps   []*capability
@@ -284,22 +285,12 @@ func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newV
 	})
 	removedCaps, staleCaps, addedCaps := processFindings(oldCaps.CapabilityInfo, newCaps.CapabilityInfo, capsEqual)
 
-	capMods := append(oldCaps.ModuleInfo, newCaps.ModuleInfo...)
-	slices.SortFunc(capMods, func(a, b capModule) int {
-		if a.Path != b.Path {
-			return strings.Compare(a.Path, b.Path)
-		}
-		return 0
-	})
-	capMods = slices.CompactFunc(capMods, func(a, b capModule) bool {
-		return a.Path == b.Path
-	})
-
 	return &inspectResults{
 		fixedIssues: fixedIssues,
 		staleIssues: staleIssues,
 		newIssues:   newIssues,
-		capMods:     capMods,
+		oldCapMods:  oldCaps.ModuleInfo,
+		newCapMods:  newCaps.ModuleInfo,
 		removedCaps: removedCaps,
 		sameCaps:    staleCaps,
 		addedCaps:   addedCaps,

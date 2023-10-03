@@ -266,6 +266,9 @@ func issuesEqual(dep string, a, b *lintIssue) bool {
 	if a.Pos.Line != b.Pos.Line {
 		return false
 	}
+	if a.Pos.Column != b.Pos.Column {
+		return false
+	}
 	if len(a.SourceLines) != len(b.SourceLines) {
 		return false
 	}

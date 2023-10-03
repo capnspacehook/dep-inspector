@@ -46,6 +46,9 @@ type findingResult struct {
 	Caps   map[string][]*capability
 	Issues map[string][]*lintIssue
 	Totals findingTotals
+
+	CapMods []string
+	ModURLs map[string]moduleURL
 }
 
 func (d *depInspector) singleDepHTMLOutput(ctx context.Context, dep, version string, capResult *capslockResult, issues []*lintIssue) (io.Reader, error) {
@@ -57,7 +60,7 @@ func (d *depInspector) singleDepHTMLOutput(ctx context.Context, dep, version str
 	if err != nil {
 		return nil, err
 	}
-	tmpl, err := loadTemplate("output/single-dep.tmpl", dep, capMods, modURLs, goVer, stdlibURL)
+	tmpl, err := loadTemplate("output/single-dep.tmpl", dep, capMods, goVer, stdlibURL)
 	if err != nil {
 		return nil, err
 	}
@@ -66,17 +69,16 @@ func (d *depInspector) singleDepHTMLOutput(ctx context.Context, dep, version str
 		Dep:              dep,
 		VersionStr:       makeVersionStr(dep, version),
 		ModuleRemoteURLs: modURLs,
-		Findings:         prepareFindingResult(dep, capResult.CapabilityInfo, issues),
+		Findings:         prepareFindingResult(dep, capResult.CapabilityInfo, issues, capMods, modURLs),
 	}
 
 	return executeTemplate(tmpl, res)
 }
 
 type compareDepsResult struct {
-	Dep              string
-	OldVersionStr    string
-	NewVersionStr    string
-	ModuleRemoteURLs map[string]moduleURL
+	Dep           string
+	OldVersionStr string
+	NewVersionStr string
 
 	OldFindings  findingResult
 	SameFindings findingResult
@@ -85,34 +87,41 @@ type compareDepsResult struct {
 }
 
 func (d *depInspector) compareDepsHTMLOutput(ctx context.Context, dep, oldVer, newVer string, results *inspectResults) (io.Reader, error) {
-	capMods, modURLs, err := findModuleURLs(results.capMods)
+	oldCapMods, oldModURLs, err := findModuleURLs(results.oldCapMods)
 	if err != nil {
 		return nil, err
 	}
+	newCapMods, newModURLs, err := findModuleURLs(results.newCapMods)
+	if err != nil {
+		return nil, err
+	}
+	capMods := append(oldCapMods, newCapMods...)
+	slices.Sort(capMods)
+	capMods = slices.Compact(capMods)
+
 	goVer, stdlibURL, err := d.findStdlibURL(ctx)
 	if err != nil {
 		return nil, err
 	}
-	tmpl, err := loadTemplate("output/compare-deps.tmpl", dep, capMods, modURLs, goVer, stdlibURL)
+	tmpl, err := loadTemplate("output/compare-deps.tmpl", dep, capMods, goVer, stdlibURL)
 	if err != nil {
 		return nil, err
 	}
 
 	res := &compareDepsResult{
-		Dep:              dep,
-		OldVersionStr:    makeVersionStr(dep, oldVer),
-		NewVersionStr:    makeVersionStr(dep, newVer),
-		ModuleRemoteURLs: modURLs,
-		OldFindings:      prepareFindingResult(dep, results.removedCaps, results.fixedIssues),
-		SameFindings:     prepareFindingResult(dep, results.sameCaps, results.staleIssues),
-		NewFindings:      prepareFindingResult(dep, results.addedCaps, results.newIssues),
+		Dep:           dep,
+		OldVersionStr: makeVersionStr(dep, oldVer),
+		NewVersionStr: makeVersionStr(dep, newVer),
+		OldFindings:   prepareFindingResult(dep, results.removedCaps, results.fixedIssues, oldCapMods, oldModURLs),
+		SameFindings:  prepareFindingResult(dep, results.sameCaps, results.staleIssues, newCapMods, newModURLs),
+		NewFindings:   prepareFindingResult(dep, results.addedCaps, results.newIssues, newCapMods, newModURLs),
 	}
 	buildCombinedTotals(res)
 
 	return executeTemplate(tmpl, res)
 }
 
-func loadTemplate(tmplPath, dep string, capMods []string, modURLs map[string]moduleURL, goVer string, stdlibURL *url.URL) (*template.Template, error) {
+func loadTemplate(tmplPath, dep string, capMods []string, goVer string, stdlibURL *url.URL) (*template.Template, error) {
 	funcMap := map[string]any{
 		"getCapsByPkg": func(caps []*capability) map[string][]*capability {
 			return lo.GroupBy(caps, func(cap *capability) string {
@@ -138,7 +147,7 @@ func loadTemplate(tmplPath, dep string, capMods []string, modURLs map[string]mod
 		"getPrevCallName": func(calls []functionCall, idx int) string {
 			return calls[idx-1].Name
 		},
-		"capPosToURL": func(call functionCall, prevCallName string) (string, error) {
+		"capPosToURL": func(call functionCall, prevCallName string, modURLs map[string]moduleURL) (string, error) {
 			name := strings.NewReplacer("*", "", "(", "", ")", "").Replace(prevCallName)
 			i := slices.IndexFunc(capMods, func(mod string) bool {
 				return strings.HasPrefix(name, mod)
@@ -178,7 +187,7 @@ func loadTemplate(tmplPath, dep string, capMods []string, modURLs map[string]mod
 
 			return callSiteToURL(call.Site, modURL, pkg), nil
 		},
-		"issuePosToURL": func(pos token.Position) string {
+		"issuePosToURL": func(pos token.Position, modURLs map[string]moduleURL) string {
 			site := callSite{
 				Filename: pos.Filename,
 				Line:     strconv.Itoa(pos.Line),
@@ -288,7 +297,7 @@ func (d *depInspector) findStdlibURL(ctx context.Context) (string, *url.URL, err
 	return goVer, stdlibURL, nil
 }
 
-func prepareFindingResult(dep string, caps []*capability, issues []*lintIssue) (f findingResult) {
+func prepareFindingResult(dep string, caps []*capability, issues []*lintIssue, capMods []string, modURLs map[string]moduleURL) (f findingResult) {
 	f.Caps = lo.GroupBy(caps, func(cap *capability) string {
 		capName := strings.ReplaceAll(strings.TrimPrefix(cap.Capability, "CAPABILITY_"), "_", " ")
 		return strings.Title(strings.ToLower(capName))
@@ -297,6 +306,9 @@ func prepareFindingResult(dep string, caps []*capability, issues []*lintIssue) (
 		return path.Join(dep, path.Dir(issue.Pos.Filename))
 	})
 	f.Totals = calculateTotals(caps, issues)
+
+	f.CapMods = capMods
+	f.ModURLs = modURLs
 
 	return f
 }
