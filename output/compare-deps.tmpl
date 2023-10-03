@@ -6,6 +6,8 @@ table, th, td {
 </style>
 <body>
 <h2>Comparing {{ .OldVersionStr }} and {{ .NewVersionStr }}:</h2>
+<h3>Total findings:</h3>
+{{- template "totals.tmpl" .Totals -}}
 <h3>New findings:</h3>
 <details>
     <summary>Capabilities</summary>
@@ -48,7 +50,5 @@ table, th, td {
     </div>
 </details>
 {{- template "totals.tmpl" .OldFindings.Totals -}}
-<h3>Total findings:</h3>
-{{- template "totals.tmpl" .Totals -}}
 </body>
 </html>
