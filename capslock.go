@@ -51,7 +51,7 @@ func (d *depInspector) findCapabilities(ctx context.Context, dep, versionStr str
 	depPkgs := []string{dep + "/..."}
 	var err error
 	if !d.inspectAllPkgs {
-		depPkgs, err = listImportedPackages(dep, d.modFile.Module.Mod.Path, pkgs)
+		depPkgs, err = listImportedPackages(dep, d.parsedModFile.Module.Mod.Path, pkgs)
 		if err != nil {
 			return nil, err
 		}
