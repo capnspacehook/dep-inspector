@@ -11,10 +11,13 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+
+	"golang.org/x/mod/module"
 )
 
 const golangciCfgName = ".golangci.yml"
@@ -33,25 +36,44 @@ type lintIssue struct {
 	Pos         token.Position
 }
 
-func (d *depInspector) lintDepVersion(ctx context.Context, dep, versionStr string, pkgs loadedPackages) ([]*lintIssue, error) {
-	var dirs []string
-	for _, pkg := range pkgs {
-		if d.inspectAllPkgs {
-			if pkg.Module == nil || pkg.Module.Path != dep {
+func (d *depInspector) lintDepVersion(ctx context.Context, dep, version string, pkgs loadedPackages) ([]*lintIssue, error) {
+	var golangciLintDirs []string
+	var staticcheckDirs []string
+	versionStr := makeVersionStr(dep, version)
+
+	if d.inspectAllPkgs || d.unusedDep {
+		escPath, err := module.EscapePath(dep)
+		if err != nil {
+			return nil, err
+		}
+		path := filepath.Join(d.modCache, escPath)
+		golangciLintDirs = []string{fmt.Sprintf("%s@%s%c...", path, version, filepath.Separator)}
+		staticcheckDirs = []string{dep + "/..."}
+	} else {
+		escDep, err := module.EscapePath(dep)
+		if err != nil {
+			return nil, err
+		}
+		escVer, err := module.EscapeVersion(version)
+		if err != nil {
+			return nil, err
+		}
+		escVerStr := makeVersionStr(escDep, escVer)
+
+		for _, pkg := range pkgs {
+			if !strings.HasPrefix(pkg.PkgPath, dep) {
 				continue
 			}
-			dir := filepath.Dir(pkg.GoFiles[0]) + string(filepath.Separator) + "..."
-			dirs = []string{dir}
-			break
-		}
 
-		if pkg.Module == nil || !strings.HasPrefix(pkg.Module.Path, dep) {
-			continue
-		}
+			pkgPath := strings.TrimPrefix(pkg.PkgPath, dep)
+			dir := filepath.Join(d.modCache, escVerStr, pkgPath)
 
-		dir := filepath.Dir(pkg.GoFiles[0])
-		if !slices.Contains(dirs, dir) {
-			dirs = append(dirs, dir)
+			if !slices.Contains(golangciLintDirs, dir) {
+				golangciLintDirs = append(golangciLintDirs, dir)
+			}
+			if !slices.Contains(staticcheckDirs, pkg.PkgPath) {
+				staticcheckDirs = append(staticcheckDirs, pkg.PkgPath)
+			}
 		}
 	}
 
@@ -66,7 +88,7 @@ func (d *depInspector) lintDepVersion(ctx context.Context, dep, versionStr strin
 		defer wg.Done()
 
 		log.Printf("linting %s with golangci-lint", versionStr)
-		issues, err := d.golangciLint(ctx, dirs)
+		issues, err := d.golangciLint(ctx, golangciLintDirs)
 		if err != nil {
 			errCh <- fmt.Errorf("linting with golangci-lint: %w", err)
 			return
@@ -77,7 +99,7 @@ func (d *depInspector) lintDepVersion(ctx context.Context, dep, versionStr strin
 		defer wg.Done()
 
 		log.Printf("linting %s with staticcheck", versionStr)
-		issues, err := d.staticcheckLint(ctx, dirs)
+		issues, err := d.staticcheckLint(ctx, staticcheckDirs)
 		if err != nil {
 			errCh <- fmt.Errorf("linting with staticcheck: %w", err)
 			return
@@ -125,7 +147,10 @@ func (d *depInspector) lintDepVersion(ctx context.Context, dep, versionStr strin
 		if err != nil {
 			return nil, fmt.Errorf("making path absolute: %w", err)
 		}
-		issues[i].Pos.Filename = trimFilename(filename, filepath.Join(d.modCache, versionStr))
+		issues[i].Pos.Filename, err = trimFilename(filename, d.modCache, dep)
+		if err != nil {
+			return nil, err
+		}
 
 		// make leading whitespace of source code lines uniform
 		for j := range issues[i].SourceLines {
@@ -309,6 +334,22 @@ func getDepRelPath(dep, path string) string {
 	return path[depVerIdx+slashIdx:]
 }
 
-func trimFilename(path, goModCache string) string {
-	return strings.TrimPrefix(path, goModCache+string(filepath.Separator))
+func trimFilename(filename, goModCache, dep string) (string, error) {
+	versionDir, file := filepath.Split(filename)
+	// trim GOMODCACHE so we just have the escaped package path
+	pkgPath := strings.TrimPrefix(versionDir, goModCache+string(filepath.Separator))
+	// remove trailing slash if necessary
+	if pkgPath[len(pkgPath)-1] == filepath.Separator {
+		pkgPath = pkgPath[:len(pkgPath)-1]
+	}
+
+	_, verPkg, ok := strings.Cut(pkgPath, "@")
+	if !ok {
+		return "", fmt.Errorf("cached module dir missing version: %q", filename)
+	}
+	// if a separator doesn't exist that's fine, the package is the
+	// dependency module so only the file will be returned
+	_, pkg, _ := strings.Cut(verPkg, string(filepath.Separator))
+
+	return path.Join(pkg, file), nil
 }

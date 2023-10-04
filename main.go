@@ -55,6 +55,7 @@ func main() {
 
 type depInspector struct {
 	inspectAllPkgs bool
+	unusedDep      bool
 	htmlOutput     bool
 	verbose        bool
 
@@ -75,6 +76,7 @@ func mainRetCode() int {
 
 	flag.Usage = usage
 	flag.BoolVar(&de.inspectAllPkgs, "a", false, "inspect all packages of the dependency, not just those that are used")
+	flag.BoolVar(&de.unusedDep, "unused-dep", false, "inspect dependency that is not used in this module")
 	flag.BoolVar(&de.htmlOutput, "html", false, "output findings in html")
 	flag.BoolVar(&de.verbose, "v", false, "print commands being run and verbose information")
 	flag.BoolVar(&printVersion, "version", false, "print version and build information and exit")
@@ -99,9 +101,9 @@ func mainRetCode() int {
 	defer cancel()
 
 	if err := mainErr(ctx, &de); err != nil {
-		var exitErr *errJustExit
+		var exitErr errJustExit
 		if errors.As(err, &exitErr) {
-			return int(*exitErr)
+			return int(exitErr)
 		}
 		log.Printf("error: %v", err)
 		return 1
@@ -196,9 +198,24 @@ func (d *depInspector) inspectDep(ctx context.Context, dep, version string) (*ca
 		return nil, nil, fmt.Errorf("setting up dependency: %w", err)
 	}
 
-	pkgs, err := listPackages(d.parsedModFile.Module.Mod.Path)
+	modPath := d.parsedModFile.Module.Mod.Path
+	pkgs, err := listPackages(modPath)
 	if err != nil {
 		return nil, nil, err
+	}
+	// if -unused-dep wasn't passed make sure the dependency is actually
+	// dependency or running tools will fail
+	if !d.unusedDep {
+		var depIsUsed bool
+		for _, pkg := range pkgs {
+			if pkg.Module != nil && pkg.Module.Path == dep {
+				depIsUsed = true
+				break
+			}
+		}
+		if !depIsUsed {
+			return nil, nil, fmt.Errorf("%s is not used in %s, run again with the -unused-dep flag", versionStr, modPath)
+		}
 	}
 
 	var (
@@ -222,7 +239,7 @@ func (d *depInspector) inspectDep(ctx context.Context, dep, version string) (*ca
 	go func() {
 		defer wg.Done()
 
-		issues, err := d.lintDepVersion(ctx, dep, versionStr, pkgs)
+		issues, err := d.lintDepVersion(ctx, dep, version, pkgs)
 		if err != nil {
 			errCh <- fmt.Errorf("linting dependency: %w", err)
 			return
@@ -452,9 +469,11 @@ func (d *depInspector) setupDepVersion(ctx context.Context, versionStr string) e
 	if err != nil {
 		return fmt.Errorf("downloading %q: %w", versionStr, err)
 	}
-	err = d.runGoCommand(ctx, "go", "mod", "tidy")
-	if err != nil {
-		return fmt.Errorf("tidying modules: %w", err)
+	if !d.unusedDep {
+		err = d.runGoCommand(ctx, "go", "mod", "tidy")
+		if err != nil {
+			return fmt.Errorf("tidying modules: %w", err)
+		}
 	}
 
 	return nil

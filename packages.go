@@ -12,7 +12,7 @@ import (
 type loadedPackages map[string]*packages.Package
 
 func listPackages(modName string) (loadedPackages, error) {
-	mode := packages.NeedName | packages.NeedFiles | packages.NeedImports | packages.NeedDeps | packages.NeedModule | packages.NeedEmbedFiles
+	mode := packages.NeedName | packages.NeedImports | packages.NeedDeps | packages.NeedModule | packages.NeedEmbedFiles
 	cfg := &packages.Config{Mode: mode}
 	pkgs, err := packages.Load(cfg, modName+"/...")
 	if err != nil {
@@ -30,8 +30,6 @@ func mapLoadedPkgs(pkgs []*packages.Package, loadedPkgs loadedPackages) {
 			continue
 		}
 
-		// we only need one file path to figure out the dir they're in
-		pkg.GoFiles = pkg.GoFiles[:1]
 		loadedPkgs[pkg.PkgPath] = pkg
 		mapLoadedPkgs(maps.Values(pkg.Imports), loadedPkgs)
 	}

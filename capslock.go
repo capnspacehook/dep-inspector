@@ -48,13 +48,16 @@ type capModule struct {
 }
 
 func (d *depInspector) findCapabilities(ctx context.Context, dep, versionStr string, pkgs loadedPackages) (*capslockResult, error) {
-	depPkgs := []string{dep + "/..."}
-	var err error
-	if !d.inspectAllPkgs {
-		depPkgs, err = listImportedPackages(dep, d.parsedModFile.Module.Mod.Path, pkgs)
+	allPkgs := dep + "/..."
+	var depPkgs []string
+	if d.inspectAllPkgs || d.unusedDep {
+		depPkgs = []string{allPkgs}
+	} else {
+		pkgs, err := listImportedPackages(dep, d.parsedModFile.Module.Mod.Path, pkgs)
 		if err != nil {
 			return nil, err
 		}
+		depPkgs = pkgs
 	}
 
 	// write embedded capability maps to a temporary file to it can
