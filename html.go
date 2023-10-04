@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"go/token"
 	"html/template"
@@ -23,6 +24,7 @@ import (
 	"github.com/tdewolff/minify/v2/html"
 	"golang.org/x/exp/maps"
 	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 )
 
 //go:embed output/*
@@ -37,6 +39,7 @@ type singleDepResult struct {
 }
 
 type moduleURL struct {
+	modPath     string
 	version     string
 	verIsCommit bool
 	url         *url.URL
@@ -60,7 +63,7 @@ func (d *depInspector) singleDepHTMLOutput(ctx context.Context, dep, version str
 	if err != nil {
 		return nil, err
 	}
-	tmpl, err := loadTemplate("output/single-dep.tmpl", dep, capMods, goVer, stdlibURL)
+	tmpl, err := d.loadTemplate("output/single-dep.tmpl", dep, capMods, goVer, stdlibURL)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +106,7 @@ func (d *depInspector) compareDepsHTMLOutput(ctx context.Context, dep, oldVer, n
 	if err != nil {
 		return nil, err
 	}
-	tmpl, err := loadTemplate("output/compare-deps.tmpl", dep, capMods, goVer, stdlibURL)
+	tmpl, err := d.loadTemplate("output/compare-deps.tmpl", dep, capMods, goVer, stdlibURL)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +124,7 @@ func (d *depInspector) compareDepsHTMLOutput(ctx context.Context, dep, oldVer, n
 	return executeTemplate(tmpl, res)
 }
 
-func loadTemplate(tmplPath, dep string, capMods []string, goVer string, stdlibURL *url.URL) (*template.Template, error) {
+func (d *depInspector) loadTemplate(tmplPath, dep string, capMods []string, goVer string, stdlibURL *url.URL) (*template.Template, error) {
 	funcMap := map[string]any{
 		"getCapsByPkg": func(caps []*capability) map[string][]*capability {
 			return lo.GroupBy(caps, func(cap *capability) string {
@@ -165,7 +168,7 @@ func loadTemplate(tmplPath, dep string, capMods []string, goVer string, stdlibUR
 					return "", fmt.Errorf("malformed function name %q", name)
 				}
 				pkg = path.Join("src", pkg)
-				return callSiteToURL(call.Site, modURL, pkg), nil
+				return callSiteToURL(call.Site, modURL, pkg, d.modCache)
 			}
 
 			modURL = modURLs[capMods[i]]
@@ -176,7 +179,7 @@ func loadTemplate(tmplPath, dep string, capMods []string, goVer string, stdlibUR
 				if !ok {
 					return "", fmt.Errorf("malformed capability call site %q", call.Name)
 				}
-				return callSiteToURL(call.Site, modURL, pkg), nil
+				return callSiteToURL(call.Site, modURL, pkg, d.modCache)
 			}
 
 			pkg, _, ok := strings.Cut(pkgAndCall[lastSlashIdx:], ".")
@@ -185,16 +188,16 @@ func loadTemplate(tmplPath, dep string, capMods []string, goVer string, stdlibUR
 			}
 			pkg = path.Join(pkgAndCall[:lastSlashIdx], pkg)
 
-			return callSiteToURL(call.Site, modURL, pkg), nil
+			return callSiteToURL(call.Site, modURL, pkg, d.modCache)
 		},
-		"issuePosToURL": func(pos token.Position, modURLs map[string]moduleURL) string {
+		"issuePosToURL": func(pos token.Position, modURLs map[string]moduleURL) (string, error) {
 			site := callSite{
 				Filename: pos.Filename,
 				Line:     strconv.Itoa(pos.Line),
 			}
 			// no need to pass the package here, the filenames already
 			// have the package prefixed
-			return callSiteToURL(site, modURLs[dep], "")
+			return callSiteToURL(site, modURLs[dep], "", d.modCache)
 		},
 		"formatDelta": func(delta int) string {
 			deltaStr := strconv.Itoa(delta)
@@ -241,12 +244,12 @@ func findModuleURLs(capMods []capModule) ([]string, map[string]moduleURL, error)
 	return maps.Keys(modURLs), modURLs, nil
 }
 
-func findModuleURL(mod, version, localPath string) (moduleURL, error) {
-	remote := "https://" + mod
-	if strings.HasPrefix(mod, "golang.org/x/") {
-		remote = "https://github.com/golang/" + strings.TrimPrefix(mod, "golang.org/x/")
+func findModuleURL(modPath, version, localPath string) (moduleURL, error) {
+	remote := "https://" + modPath
+	if strings.HasPrefix(modPath, "golang.org/x/") {
+		remote = "https://github.com/golang/" + strings.TrimPrefix(modPath, "golang.org/x/")
 	}
-	if !strings.HasPrefix(mod, "github.com/") && !strings.HasPrefix(mod, "gitlab.com/") {
+	if !strings.HasPrefix(modPath, "github.com/") && !strings.HasPrefix(modPath, "gitlab.com/") {
 		repo, err := vcs.NewRepo(remote, localPath)
 		if err != nil {
 			return moduleURL{}, fmt.Errorf("error finding remote repository for dependency: %w", err)
@@ -271,6 +274,7 @@ func findModuleURL(mod, version, localPath string) (moduleURL, error) {
 	}
 
 	return moduleURL{
+		modPath:     modPath,
 		version:     version,
 		verIsCommit: verIsCommit,
 		url:         remoteURL,
@@ -328,15 +332,24 @@ func executeTemplate(tmpl *template.Template, data any) (io.Reader, error) {
 	return &buf, nil
 }
 
-func callSiteToURL(site callSite, modURL moduleURL, pkg string) string {
+var v2PlusRe = regexp.MustCompile(`^v\d+$`)
+
+func callSiteToURL(site callSite, modURL moduleURL, pkg, goModCache string) (string, error) {
 	if site.Filename == "" {
-		return ""
+		return "", nil
 	}
 
 	newURL := *modURL.url
 	newURL.Fragment = "L" + site.Line
 	filename := path.Join(pkg, site.Filename)
 
+	strippedPath, err := stripMajorVersionDir(modURL.modPath, modURL.version, newURL.Path, goModCache)
+	if err != nil {
+		return "", err
+	}
+	newURL.Path = strippedPath
+
+	// format the URL according to the hosting provider
 	switch newURL.Host {
 	case "github.com":
 		newURL.Path = path.Join(newURL.Path, "blob", modURL.version, filename)
@@ -349,8 +362,34 @@ func callSiteToURL(site callSite, modURL moduleURL, pkg string) string {
 		}
 		newURL.Path = path.Join(newURL.Path, "src", srcType, modURL.version, filename)
 	default:
-		return filename + ":" + site.Line
+		return filename + ":" + site.Line, nil
 	}
 
-	return newURL.String()
+	return newURL.String(), nil
+}
+
+// stripMajorVersionDir removes the final /vN element of a module path
+// if the module is greater than v2.0.0 and the /vN element isn't a valid
+// subdirectory in the source code.
+func stripMajorVersionDir(modPath, version, urlPath, goModCache string) (string, error) {
+	if c := semver.Compare(version, "v2.0.0"); c == -1 {
+		return urlPath, nil
+	}
+	rest, base := path.Split(urlPath)
+	if !v2PlusRe.MatchString(base) {
+		return urlPath, nil
+	}
+	escPath, err := module.EscapePath(modPath)
+	if err != nil {
+		return "", err
+	}
+	srcPath := filepath.Join(goModCache, escPath)
+	if _, err := os.Stat(srcPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return rest, nil
+		}
+		return "", err
+	}
+
+	return urlPath, nil
 }
