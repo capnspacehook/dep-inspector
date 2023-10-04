@@ -344,7 +344,7 @@ func (d *depInspector) parseAndBackupGoMod(ctx context.Context) (ret error) {
 		}
 	}()
 
-	d.modFile, err = os.Open(modFilePath)
+	d.modFile, err = os.OpenFile(modFilePath, os.O_RDWR, 0o644)
 	if err != nil {
 		return err
 	}
@@ -375,7 +375,7 @@ func (d *depInspector) parseAndBackupGoMod(ctx context.Context) (ret error) {
 		return err
 	}
 	sumFilePath := filepath.Join(filepath.Dir(modFilePath), "go.sum")
-	d.sumFile, err = os.Open(sumFilePath)
+	d.sumFile, err = os.OpenFile(sumFilePath, os.O_RDWR, 0o644)
 	if err != nil {
 		return err
 	}
