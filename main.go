@@ -464,6 +464,7 @@ func (d *depInspector) getGoModCache(ctx context.Context) (string, error) {
 }
 
 func (d *depInspector) setupDepVersion(ctx context.Context, versionStr string) error {
+	log.Printf("setting up %s", versionStr)
 	// add dep to go.mod so linting it will work
 	err := d.runGoCommand(ctx, "go", "get", versionStr)
 	if err != nil {
