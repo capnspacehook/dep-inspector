@@ -147,7 +147,7 @@ func (d *depInspector) lintDepVersion(ctx context.Context, dep, version string, 
 		if err != nil {
 			return nil, fmt.Errorf("making path absolute: %w", err)
 		}
-		issues[i].Pos.Filename, err = trimFilename(filename, d.modCache, dep)
+		issues[i].Pos.Filename, err = trimFilename(filename, d.modCache)
 		if err != nil {
 			return nil, err
 		}
@@ -334,7 +334,7 @@ func getDepRelPath(dep, path string) string {
 	return path[depVerIdx+slashIdx:]
 }
 
-func trimFilename(filename, goModCache, dep string) (string, error) {
+func trimFilename(filename, goModCache string) (string, error) {
 	versionDir, file := filepath.Split(filename)
 	// trim GOMODCACHE so we just have the escaped package path
 	pkgPath := strings.TrimPrefix(versionDir, goModCache+string(filepath.Separator))

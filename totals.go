@@ -25,8 +25,11 @@ func calculateTotals(caps []*capability, issues []*lintIssue) findingTotals {
 		TotalIssues: len(issues),
 	}
 
-	t.Caps = lo.CountValuesBy(caps, func(cap *capability) string {
-		capName := strings.ReplaceAll(strings.TrimPrefix(cap.Capability, "CAPABILITY_"), "_", " ")
+	t.Caps = lo.CountValuesBy(caps, func(c *capability) string {
+		capName := strings.ReplaceAll(strings.TrimPrefix(c.Capability, "CAPABILITY_"), "_", " ")
+		//lint:ignore SA1019 the capability name will not have Unicode
+		// punctuation that causes issues for strings.ToLower so using
+		// it is fine
 		return strings.Title(strings.ToLower(capName))
 	})
 	t.Issues = lo.CountValuesBy(issues, func(issue *lintIssue) string {

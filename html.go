@@ -127,13 +127,13 @@ func (d *depInspector) compareDepsHTMLOutput(ctx context.Context, dep, oldVer, n
 func (d *depInspector) loadTemplate(tmplPath, dep string, capMods []string, goVer string, stdlibURL *url.URL) (*template.Template, error) {
 	funcMap := map[string]any{
 		"getCapsByPkg": func(caps []*capability) map[string][]*capability {
-			return lo.GroupBy(caps, func(cap *capability) string {
-				return cap.PackageDir
+			return lo.GroupBy(caps, func(c *capability) string {
+				return c.PackageDir
 			})
 		},
 		"getCapsByFinalCall": func(caps []*capability) map[string][]*capability {
-			return lo.GroupBy(caps, func(cap *capability) string {
-				return cap.Path[len(cap.Path)-1].Name
+			return lo.GroupBy(caps, func(c *capability) string {
+				return c.Path[len(c.Path)-1].Name
 			})
 		},
 		"capType": func(capType string) string {
@@ -143,8 +143,8 @@ func (d *depInspector) loadTemplate(tmplPath, dep string, capMods []string, goVe
 			return "Transitive"
 		},
 		"getIssuesByLinter": func(issues []*lintIssue) map[string][]*lintIssue {
-			return lo.GroupBy(issues, func(issue *lintIssue) string {
-				return issue.FromLinter
+			return lo.GroupBy(issues, func(i *lintIssue) string {
+				return i.FromLinter
 			})
 		},
 		"getPrevCallName": func(calls []functionCall, idx int) string {
@@ -302,12 +302,15 @@ func (d *depInspector) findStdlibURL(ctx context.Context) (string, *url.URL, err
 }
 
 func prepareFindingResult(dep string, caps []*capability, issues []*lintIssue, capMods []string, modURLs map[string]moduleURL) (f findingResult) {
-	f.Caps = lo.GroupBy(caps, func(cap *capability) string {
-		capName := strings.ReplaceAll(strings.TrimPrefix(cap.Capability, "CAPABILITY_"), "_", " ")
+	f.Caps = lo.GroupBy(caps, func(c *capability) string {
+		capName := strings.ReplaceAll(strings.TrimPrefix(c.Capability, "CAPABILITY_"), "_", " ")
+		//lint:ignore SA1019 the capability name will not have Unicode
+		// punctuation that causes issues for strings.ToLower so using
+		// it is fine
 		return strings.Title(strings.ToLower(capName))
 	})
-	f.Issues = lo.GroupBy(issues, func(issue *lintIssue) string {
-		return path.Join(dep, path.Dir(issue.Pos.Filename))
+	f.Issues = lo.GroupBy(issues, func(i *lintIssue) string {
+		return path.Join(dep, path.Dir(i.Pos.Filename))
 	})
 	f.Totals = calculateTotals(caps, issues)
 

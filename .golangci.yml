@@ -29,7 +29,6 @@ linters:
     - nilnil
     - noctx
     - paralleltest
-    - prealloc
     - predeclared
     - reassign
     - revive
