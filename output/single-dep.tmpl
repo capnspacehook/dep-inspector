@@ -1,9 +1,7 @@
 <html>
-<style>
-table, th, td {
-  border:1px solid black;
-}
-</style>
+<header>
+{{- template "style.tmpl" -}}
+</header>
 <body>
 <h2>Findings for {{ .VersionStr }}:</h2>
 {{- if .Findings.Totals.TotalCaps -}}

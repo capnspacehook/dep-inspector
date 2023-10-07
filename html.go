@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"html/template"
 	"io"
+	"log"
 	"net/url"
 	"os"
 	"path"
@@ -29,6 +30,13 @@ import (
 
 //go:embed output/*
 var tmplFS embed.FS
+
+var supportingTmpls = []string{
+	"output/capabilities.tmpl",
+	"output/linter-issues.tmpl",
+	"output/style.tmpl",
+	"output/totals.tmpl",
+}
 
 type singleDepResult struct {
 	Dep              string
@@ -213,7 +221,7 @@ func (d *depInspector) loadTemplate(tmplPath, dep string, capMods []string, goVe
 		return nil, fmt.Errorf("error parsing output template: %w", err)
 	}
 	tmpl = tmpl.Funcs(funcMap)
-	tmpl, err = tmpl.ParseFS(tmplFS, "output/capabilities.tmpl", "output/linter-issues.tmpl", "output/totals.tmpl")
+	tmpl, err = tmpl.ParseFS(tmplFS, supportingTmpls...)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing and associating output templates: %w", err)
 	}
