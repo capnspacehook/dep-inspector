@@ -358,6 +358,15 @@ func callSiteToURL(site callSite, modURL moduleURL, pkg, goModCache string) (str
 		newURL.Path = path.Join(newURL.Path, "blob", modURL.version, filename)
 	case "gitlab.com":
 		newURL.Path = path.Join(newURL.Path, "-", "blob", modURL.version, filename)
+	case "go.googlesource.com":
+		// it seems only go.googlesource.com doesn't prefix 'L' to line
+		// references
+		newURL.Fragment = site.Line
+		if modURL.verIsCommit {
+			newURL.Path = path.Join(newURL.Path, "+", "refs", "tags", modURL.version, filename)
+		} else {
+			newURL.Path = path.Join(newURL.Path, "+", modURL.version, filename)
+		}
 	case "gittea.dev":
 		srcType := "tag"
 		if modURL.verIsCommit {
@@ -365,6 +374,7 @@ func callSiteToURL(site callSite, modURL moduleURL, pkg, goModCache string) (str
 		}
 		newURL.Path = path.Join(newURL.Path, "src", srcType, modURL.version, filename)
 	default:
+		log.Printf("unknown hosting provider %s", newURL.Host)
 		return filename + ":" + site.Line, nil
 	}
 
