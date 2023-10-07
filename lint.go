@@ -120,27 +120,9 @@ func (d *depInspector) lintDepVersion(ctx context.Context, dep, version string, 
 
 	// sort issues by linter and file
 	issues := append(<-issuesCh, <-issuesCh...)
-	slices.SortFunc(issues, func(a, b *lintIssue) int {
-		if a.FromLinter != b.FromLinter {
-			return strings.Compare(a.FromLinter, b.FromLinter)
-		}
-		if a.Pos.Filename != b.Pos.Filename {
-			return strings.Compare(a.Pos.Filename, b.Pos.Filename)
-		}
-		if a.Pos.Line != b.Pos.Line {
-			if a.Pos.Line < b.Pos.Line {
-				return -1
-			}
-			return 1
-		}
-		if a.Pos.Column != b.Pos.Column {
-			if a.Pos.Column < b.Pos.Column {
-				return -1
-			}
-			return 1
-		}
-		return 0
-	})
+	issues = slices.Clip(issues)
+	slices.SortFunc(issues, compareIssues)
+
 	for i := range issues {
 		filename := issues[i].Pos.Filename
 		filename, err := filepath.Abs(filename)
@@ -282,6 +264,29 @@ func getSrcLinesFromFile(path string, startLine, endLine int) ([]string, error) 
 	}
 
 	return srcLines, nil
+}
+
+func compareIssues(a, b *lintIssue) int {
+	if a.Pos.Column != b.Pos.Column {
+		if a.Pos.Column < b.Pos.Column {
+			return -1
+		}
+		return 1
+	}
+	if a.Pos.Line != b.Pos.Line {
+		if a.Pos.Line < b.Pos.Line {
+			return -1
+		}
+		return 1
+	}
+	if a.Pos.Filename != b.Pos.Filename {
+		return strings.Compare(a.Pos.Filename, b.Pos.Filename)
+	}
+	if a.FromLinter != b.FromLinter {
+		return strings.Compare(a.FromLinter, b.FromLinter)
+	}
+
+	return 0
 }
 
 func issuesEqual(dep string, a, b *lintIssue) bool {

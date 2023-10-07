@@ -286,15 +286,15 @@ func (d *depInspector) compareDepVersions(ctx context.Context, dep, oldVer, newV
 }
 
 type inspectResults struct {
-	fixedIssues []*lintIssue
-	staleIssues []*lintIssue
-	newIssues   []*lintIssue
-
 	oldCapMods  []capModule
 	newCapMods  []capModule
 	removedCaps []*capability
 	sameCaps    []*capability
 	addedCaps   []*capability
+
+	fixedIssues []*lintIssue
+	staleIssues []*lintIssue
+	newIssues   []*lintIssue
 }
 
 func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newVer string) (*inspectResults, error) {
@@ -311,20 +311,20 @@ func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newV
 	}
 
 	// process linter issues and capabilities
+	removedCaps, staleCaps, addedCaps := processFindings(oldCaps.CapabilityInfo, newCaps.CapabilityInfo, capsEqual)
 	fixedIssues, staleIssues, newIssues := processFindings(oldLintIssues, newLintIssues, func(a, b *lintIssue) bool {
 		return issuesEqual(dep, a, b)
 	})
-	removedCaps, staleCaps, addedCaps := processFindings(oldCaps.CapabilityInfo, newCaps.CapabilityInfo, capsEqual)
 
 	return &inspectResults{
-		fixedIssues: fixedIssues,
-		staleIssues: staleIssues,
-		newIssues:   newIssues,
 		oldCapMods:  oldCaps.ModuleInfo,
 		newCapMods:  newCaps.ModuleInfo,
 		removedCaps: removedCaps,
 		sameCaps:    staleCaps,
 		addedCaps:   addedCaps,
+		fixedIssues: fixedIssues,
+		staleIssues: staleIssues,
+		newIssues:   newIssues,
 	}, nil
 }
 
@@ -482,29 +482,35 @@ func (d *depInspector) setupDepVersion(ctx context.Context, versionStr string) e
 
 func processFindings[T any](oldVerFindings, newVerFindings []T, equal func(a, b T) bool) ([]T, []T, []T) {
 	var (
-		removedFindings []T
-		staleFindings   []T
-		newFindings     []T
+		allFindingsLen = len(oldVerFindings) + len(newVerFindings)
+
+		removedFindings = make([]T, 0, allFindingsLen/4)
+		staleFindings   = make([]T, 0, allFindingsLen/2)
+		newFindings     = make([]T, 0, allFindingsLen/4)
 	)
 
-	for _, issue := range oldVerFindings {
-		idx := slices.IndexFunc(newVerFindings, func(issue2 T) bool {
-			return equal(issue, issue2)
+	for _, finding := range oldVerFindings {
+		idx := slices.IndexFunc(newVerFindings, func(finding2 T) bool {
+			return equal(finding, finding2)
 		})
 		if idx == -1 {
-			removedFindings = append(removedFindings, issue)
+			removedFindings = append(removedFindings, finding)
 		} else {
 			staleFindings = append(staleFindings, newVerFindings[idx])
 		}
 	}
-	for _, issue := range newVerFindings {
-		idx := slices.IndexFunc(oldVerFindings, func(issue2 T) bool {
-			return equal(issue, issue2)
+	for _, finding := range newVerFindings {
+		idx := slices.IndexFunc(oldVerFindings, func(finding2 T) bool {
+			return equal(finding, finding2)
 		})
 		if idx == -1 {
-			newFindings = append(newFindings, issue)
+			newFindings = append(newFindings, finding)
 		}
 	}
+
+	removedFindings = slices.Clip(removedFindings)
+	staleFindings = slices.Clip(staleFindings)
+	newFindings = slices.Clip(newFindings)
 
 	return removedFindings, staleFindings, newFindings
 }
