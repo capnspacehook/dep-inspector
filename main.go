@@ -18,6 +18,7 @@ import (
 
 	"github.com/pkg/browser"
 	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -35,7 +36,13 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `
 <Project description>
 
-	dep-inspector [flags]
+To inspect a single dependency version:
+
+	dep-inspector [flags] path/to/module@version
+
+To compare dependency versions:
+
+	dep-inspector [flags] path/to/module old-version new-version
 
 <Project details/usage>
 
@@ -134,12 +141,16 @@ func mainErr(ctx context.Context, de *depInspector) (ret error) {
 		dep, ver, ok := strings.Cut(depVer, "@")
 		if !ok {
 			// TODO: support not passing version and just using what's in go.mod
-			log.Println(`malformed version string: no "@" present`)
+			log.Println(`malformed module version string: no "@" present`)
 			usage()
 			return errJustExit(2)
 		}
+		ver, err := checkVersion(ver)
+		if err != nil {
+			return err
+		}
 
-		err := de.inspectSingleDep(ctx, dep, ver)
+		err = de.inspectSingleDep(ctx, dep, ver)
 		if err != nil {
 			return err
 		}
@@ -147,9 +158,15 @@ func mainErr(ctx context.Context, de *depInspector) (ret error) {
 	}
 
 	dep := flag.Arg(0)
-	oldVer := flag.Arg(1)
-	newVer := flag.Arg(2)
-	err := de.compareDepVersions(ctx, dep, oldVer, newVer)
+	oldVer, err := checkVersion(flag.Arg(1))
+	if err != nil {
+		return fmt.Errorf("checking old version: %w", err)
+	}
+	newVer, err := checkVersion(flag.Arg(2))
+	if err != nil {
+		return fmt.Errorf("checking old version: %w", err)
+	}
+	err = de.compareDepVersions(ctx, dep, oldVer, newVer)
 	if err != nil {
 		return err
 	}
@@ -166,6 +183,20 @@ func (d *depInspector) init(ctx context.Context) (err error) {
 		return err
 	}
 	return nil
+}
+
+func checkVersion(ver string) (string, error) {
+	if ver == "" {
+		return "", fmt.Errorf("version is empty")
+	}
+	if ver[0] != 'v' {
+		ver = "v" + ver
+	}
+	if !semver.IsValid(ver) {
+		return "", fmt.Errorf("%q is not a valid module version", ver)
+	}
+
+	return ver, nil
 }
 
 func (d *depInspector) inspectSingleDep(ctx context.Context, dep, version string) error {
