@@ -63,7 +63,7 @@ func main() {
 type depInspector struct {
 	inspectAllPkgs bool
 	unusedDep      bool
-	htmlOutput     bool
+	outputFile     string
 	verbose        bool
 
 	parsedModFile *modfile.File
@@ -84,7 +84,7 @@ func mainRetCode() int {
 	flag.Usage = usage
 	flag.BoolVar(&de.inspectAllPkgs, "a", false, "inspect all packages of the dependency, not just those that are used")
 	flag.BoolVar(&de.unusedDep, "unused-dep", false, "inspect dependency that is not used in this module")
-	flag.BoolVar(&de.htmlOutput, "html", false, "output findings in html")
+	flag.StringVar(&de.outputFile, "output-file", "", "file to write output HTML to")
 	flag.BoolVar(&de.verbose, "v", false, "print commands being run and verbose information")
 	flag.BoolVar(&printVersion, "version", false, "print version and build information and exit")
 	flag.Parse()
@@ -205,20 +205,25 @@ func (d *depInspector) inspectSingleDep(ctx context.Context, dep, version string
 		return err
 	}
 
-	if d.htmlOutput {
-		r, err := d.singleDepHTMLOutput(ctx, dep, version, capResult, lintIssues)
-		if err != nil {
-			return err
-		}
-		err = browser.OpenReader(r)
-		if err != nil {
-			return err
-		}
-		return nil
+	r, err := d.singleDepHTMLOutput(ctx, dep, version, capResult, lintIssues)
+	if err != nil {
+		return err
 	}
 
-	printCaps(capResult.CapabilityInfo)
-	printLinterIssues(lintIssues)
+	if d.outputFile != "" {
+		outFile, err := os.Create(d.outputFile)
+		if err != nil {
+			return err
+		}
+		defer outFile.Close()
+		_, err = io.Copy(outFile, r)
+		return err
+	}
+
+	err = browser.OpenReader(r)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -298,21 +303,25 @@ func (d *depInspector) compareDepVersions(ctx context.Context, dep, oldVer, newV
 		return err
 	}
 
-	if d.htmlOutput {
-		r, err := d.compareDepsHTMLOutput(ctx, dep, oldVer, newVer, results)
-		if err != nil {
-			return err
-		}
-
-		err = browser.OpenReader(r)
-		if err != nil {
-			return err
-		}
-		return nil
+	r, err := d.compareDepsHTMLOutput(ctx, dep, oldVer, newVer, results)
+	if err != nil {
+		return err
 	}
 
-	printDepComparison(results)
+	if d.outputFile != "" {
+		outFile, err := os.Create(d.outputFile)
+		if err != nil {
+			return err
+		}
+		defer outFile.Close()
+		_, err = io.Copy(outFile, r)
+		return err
+	}
 
+	err = browser.OpenReader(r)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
