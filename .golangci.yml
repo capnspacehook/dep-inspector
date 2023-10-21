@@ -47,6 +47,9 @@ linters-settings:
       - standard
       - default
       - prefix(github.com/capnspacehook/dep-inspector)
+  goconst:
+    min-len: 5
+    min-occurrences: 3
   gocritic:
     disabled-checks:
       - appendAssign
