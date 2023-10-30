@@ -6,12 +6,12 @@ require (
 	github.com/Masterminds/vcs v1.13.3
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8
 	github.com/samber/lo v1.38.1
-	github.com/tdewolff/minify/v2 v2.19.10
+	github.com/tdewolff/minify/v2 v2.20.1
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9
 	golang.org/x/mod v0.13.0
 )
 
-require github.com/tdewolff/parse/v2 v2.6.8 // indirect
+require github.com/tdewolff/parse/v2 v2.7.1 // indirect
 
 require (
 	golang.org/x/sys v0.13.0 // indirect
