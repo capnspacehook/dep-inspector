@@ -35,27 +35,24 @@ func mapLoadedPkgs(pkgs []*packages.Package, loadedPkgs loadedPackages) {
 	}
 }
 
-func listImportedPackages(dep string, modName string, pkgs loadedPackages) ([]string, error) {
+func listImportedPackages(dep string, pkgs loadedPackages) ([]string, error) {
 	pkgImports := make(map[string][]string)
 
 	for _, pkg := range pkgs {
-		if !strings.HasPrefix(pkg.PkgPath, modName) {
+		if !strings.HasPrefix(pkg.PkgPath, dep) {
 			continue
 		}
 
-		for _, imp := range pkg.Imports {
-			if !strings.HasPrefix(imp.PkgPath, dep) {
-				continue
-			}
-
-			importedPkg, ok := pkgs[imp.PkgPath]
-			if !ok {
-				return nil, fmt.Errorf("couldn't find package %s", imp)
-			}
-			pkgImports[importedPkg.PkgPath] = maps.Keys(importedPkg.Imports)
+		importedPkg, ok := pkgs[pkg.PkgPath]
+		if !ok {
+			return nil, fmt.Errorf("couldn't find package %s", pkg)
 		}
+		pkgImports[importedPkg.PkgPath] = maps.Keys(importedPkg.Imports)
 	}
 
+	// don't add a package to be checked if another package imports it,
+	// it will be recursively checked already so explicitly specifying
+	// it will lead to duplicate or inaccurate results from capslock
 	importsToCheck := make([]string, 0, len(pkgImports))
 	for pkgPath := range pkgImports {
 		addImport := true
@@ -68,6 +65,10 @@ func listImportedPackages(dep string, modName string, pkgs loadedPackages) ([]st
 		if addImport {
 			importsToCheck = append(importsToCheck, pkgPath)
 		}
+	}
+
+	if len(importsToCheck) == 0 {
+		return nil, fmt.Errorf("there are no packages to check with capslock")
 	}
 
 	return importsToCheck, nil

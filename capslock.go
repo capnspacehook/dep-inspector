@@ -53,11 +53,11 @@ func (d *depInspector) findCapabilities(ctx context.Context, dep, versionStr str
 	if d.inspectAllPkgs || d.unusedDep {
 		depPkgs = []string{allPkgs}
 	} else {
-		pkgs, err := listImportedPackages(dep, d.parsedModFile.Module.Mod.Path, pkgs)
+		importedPkgs, err := listImportedPackages(dep, pkgs)
 		if err != nil {
 			return nil, err
 		}
-		depPkgs = pkgs
+		depPkgs = importedPkgs
 	}
 
 	// write embedded capability maps to a temporary file to it can
