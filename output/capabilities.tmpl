@@ -25,8 +25,12 @@
                                                 {{- if ne $i 0 -}}
                                                     &nbsp;&nbsp;
                                                     {{- if $call.Site.Filename -}}
-                                                        <a href="{{ capPosToURL $call (getPrevCallName $cap.Path $i) $.ModURLs }}" target="_blank"
-                                                            rel="noopener noreferrer">{{ $call.Site.Filename }}:{{ $call.Site.Line }}</a>:&nbsp;
+                                                        {{- with $posURL := capPosToURL $call (getPrevCallName $cap.Path $i) $.ModURLs -}}
+                                                            <a href="{{ $posURL }}" target="_blank"
+                                                                rel="noopener noreferrer">{{ $call.Site.Filename }}:{{ $call.Site.Line }}</a>:&nbsp;
+                                                        {{- else -}}
+                                                            <p style="margin: 0">{{ $call.Site.Filename }}:{{ $call.Site.Line }}</p>
+                                                        {{- end -}}
                                                     {{- end -}}
                                                 {{- end -}}
                                                 {{ $call.Name }}{{ if eq $i 0 }} ({{ capType $cap.CapabilityType }}){{ end }}<br>

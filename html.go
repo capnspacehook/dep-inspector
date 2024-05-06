@@ -28,15 +28,19 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-//go:embed output/*
-var tmplFS embed.FS
+var (
+	//go:embed output/*
+	tmplFS          embed.FS
+	supportingTmpls = []string{
+		"output/capabilities.tmpl",
+		"output/linter-issues.tmpl",
+		"output/style.tmpl",
+		"output/totals.tmpl",
+	}
 
-var supportingTmpls = []string{
-	"output/capabilities.tmpl",
-	"output/linter-issues.tmpl",
-	"output/style.tmpl",
-	"output/totals.tmpl",
-}
+	supportedHosts = []string{"github.com", "gitlab.com", "go.googlesource.com", "gittea.dev"}
+	v2PlusRe       = regexp.MustCompile(`^v\d+$`)
+)
 
 type singleDepResult struct {
 	Dep              string
@@ -51,6 +55,10 @@ type moduleURL struct {
 	version     string
 	verIsCommit bool
 	url         *url.URL
+}
+
+func (m moduleURL) isZero() bool {
+	return m.modPath == "" && m.version == "" && !m.verIsCommit && m.url == nil
 }
 
 type findingResult struct {
@@ -180,6 +188,13 @@ func (d *depInspector) loadTemplate(tmplPath, dep string, capMods []string, goVe
 			}
 
 			modURL = modURLs[capMods[i]]
+			if modURL.isZero() {
+				// there was an error finding the module URL earlier,
+				// return an empty string so the template can omit the
+				// URL
+				return "", nil
+			}
+
 			pkgAndCall := strings.TrimPrefix(name, capMods[i])
 			lastSlashIdx := strings.LastIndex(pkgAndCall, "/")
 			if lastSlashIdx == -1 {
@@ -199,6 +214,17 @@ func (d *depInspector) loadTemplate(tmplPath, dep string, capMods []string, goVe
 			return callSiteToURL(call.Site, modURL, pkg, d.modCache)
 		},
 		"issuePosToURL": func(pos token.Position, modURLs map[string]moduleURL) (string, error) {
+			modURL, ok := modURLs[dep]
+			if !ok {
+				return "", fmt.Errorf("module URL for dep %s not found", dep)
+			}
+			if modURL.isZero() {
+				// there was an error finding the module URL earlier,
+				// return an empty string so the template can omit the
+				// URL
+				return "", nil
+			}
+
 			site := callSite{
 				Filename: pos.Filename,
 				Line:     strconv.Itoa(pos.Line),
@@ -244,7 +270,8 @@ func findModuleURLs(capMods []capModule) ([]string, map[string]moduleURL, error)
 		}
 		modURL, err := findModuleURL(modInfo.Path, modInfo.Version, localPath)
 		if err != nil {
-			return nil, nil, err
+			log.Printf("error finding module URL: %v", err)
+			modURLs[modInfo.Path] = moduleURL{}
 		}
 		modURLs[modInfo.Path] = modURL
 	}
@@ -267,6 +294,9 @@ func findModuleURL(modPath, version, localPath string) (moduleURL, error) {
 	remoteURL, err := url.Parse(remote)
 	if err != nil {
 		return moduleURL{}, fmt.Errorf("parsing remote URL: %w", err)
+	}
+	if !slices.Contains(supportedHosts, remoteURL.Host) {
+		return moduleURL{}, fmt.Errorf("unknown hosting provider %s", remoteURL.Host)
 	}
 
 	// make the version not Go specific
@@ -342,8 +372,6 @@ func executeTemplate(tmpl *template.Template, data any) (io.Reader, error) {
 
 	return &buf, nil
 }
-
-var v2PlusRe = regexp.MustCompile(`^v\d+$`)
 
 func callSiteToURL(site callSite, modURL moduleURL, pkg, goModCache string) (string, error) {
 	if site.Filename == "" {
