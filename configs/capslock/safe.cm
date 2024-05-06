@@ -1,1 +1,2 @@
 func (*strings.Builder).copyCheck CAPABILITY_SAFE
+func math/rand.runtime_rand CAPABILITY_SAFE
