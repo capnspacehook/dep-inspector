@@ -440,6 +440,15 @@ func (d *depInspector) restoreGoMod() (ret error) {
 		}
 	}()
 
+	// truncate go.mod and go.sum in case they are currently larger
+	// than the size of the backups
+	if err := d.modFile.Truncate(0); err != nil {
+		return fmt.Errorf("truncating go.mod: %w", err)
+	}
+	if err := d.sumFile.Truncate(0); err != nil {
+		return fmt.Errorf("truncating go.sum: %w", err)
+	}
+
 	seekers := []io.Seeker{
 		d.modFile,
 		d.sumFile,
