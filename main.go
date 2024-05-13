@@ -24,6 +24,7 @@ import (
 const (
 	projectName = "Dep Inspector"
 
+	curVersion = "current"
 	tempPrefix = "dep-inspector"
 )
 
@@ -34,17 +35,20 @@ var goEnvVars = []string{
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `
-<Project description>
+dep-inspector allows you to find used capabilities and potential
+correctness issues in a dependency version or compare between 
+dependency versions.
 
 To inspect a single dependency version:
 
-	dep-inspector [flags] path/to/module@version
+	dep-inspector [flags] path/of/module@version
 
 To compare dependency versions:
 
-	dep-inspector [flags] path/to/module old-version new-version
+	dep-inspector [flags] path/of/module old-version new-version
 
-<Project details/usage>
+'current' can be used instead of a version if you wish to inspect or
+compare the current version of a dependency.
 
 %s accepts the following flags:
 
@@ -84,7 +88,7 @@ func mainRetCode() int {
 	flag.Usage = usage
 	flag.BoolVar(&de.inspectAllPkgs, "a", false, "inspect all packages of the dependency, not just those that are used")
 	flag.BoolVar(&de.unusedDep, "unused-dep", false, "inspect dependency that is not used in this module")
-	flag.StringVar(&de.outputFile, "output-file", "", "file to write output HTML to")
+	flag.StringVar(&de.outputFile, "o", "", "file to write output HTML to")
 	flag.BoolVar(&de.verbose, "v", false, "print commands being run and verbose information")
 	flag.BoolVar(&printVersion, "version", false, "print version and build information and exit")
 	flag.Parse()
@@ -145,33 +149,28 @@ func mainErr(ctx context.Context, de *depInspector) (ret error) {
 			usage()
 			return errJustExit(2)
 		}
-		ver, err := checkVersion(ver)
+		ver, err := de.checkVersion(dep, ver)
 		if err != nil {
 			return err
 		}
 
-		err = de.inspectSingleDep(ctx, dep, ver)
-		if err != nil {
-			return err
-		}
-		return nil
+		return de.inspectSingleDep(ctx, dep, ver)
 	}
 
 	dep := flag.Arg(0)
-	oldVer, err := checkVersion(flag.Arg(1))
+	oldVer, err := de.checkVersion(dep, flag.Arg(1))
 	if err != nil {
 		return fmt.Errorf("checking old version: %w", err)
 	}
-	newVer, err := checkVersion(flag.Arg(2))
+	newVer, err := de.checkVersion(dep, flag.Arg(2))
 	if err != nil {
-		return fmt.Errorf("checking old version: %w", err)
+		return fmt.Errorf("checking new version: %w", err)
 	}
-	err = de.compareDepVersions(ctx, dep, oldVer, newVer)
-	if err != nil {
-		return err
+	if oldVer == newVer {
+		return errors.New("cannot compare; old version and new version are the same")
 	}
 
-	return nil
+	return de.compareDepVersions(ctx, dep, oldVer, newVer)
 }
 
 func (d *depInspector) init(ctx context.Context) (err error) {
@@ -185,10 +184,26 @@ func (d *depInspector) init(ctx context.Context) (err error) {
 	return nil
 }
 
-func checkVersion(ver string) (string, error) {
+func (d *depInspector) checkVersion(dep, ver string) (string, error) {
 	if ver == "" {
-		return "", fmt.Errorf("version is empty")
+		return "", errors.New("version is empty")
 	}
+
+	if ver == curVersion {
+		if d.unusedDep {
+			return "", errors.New("finding the current version and -unused-dep are mutually exclusive")
+		}
+
+		for _, requiredDep := range d.parsedModFile.Require {
+			if requiredDep.Mod.Path == dep {
+				ver = requiredDep.Mod.Version
+			}
+		}
+		if ver == curVersion {
+			return "", fmt.Errorf("an entry in go.mod could not be found for %q", dep)
+		}
+	}
+
 	if ver[0] != 'v' {
 		ver = "v" + ver
 	}
