@@ -65,18 +65,29 @@ func main() {
 }
 
 type depInspector struct {
-	inspectAllPkgs bool
-	unusedDep      bool
-	outputFile     string
-	verbose        bool
+	inspectAllPkgs   bool
+	unusedDep        bool
+	upgradeTransDeps bool
+	outputFile       string
+	verbose          bool
 
+	modFilePath   string
+	sumFilePath   string
 	parsedModFile *modfile.File
 	modCache      string
 
-	modFile       *os.File
-	sumFile       *os.File
-	modBackupFile *os.File
-	sumBackupFile *os.File
+	modBackupFiles    *modFilePair
+	oldModBackupFiles *modFilePair
+	newModBackupFiles *modFilePair
+}
+
+type modFilePair struct {
+	modFile *os.File
+	sumFile *os.File
+}
+
+func (m *modFilePair) Close() error {
+	return errors.Join(m.modFile.Close(), m.sumFile.Close())
 }
 
 func mainRetCode() int {
@@ -88,6 +99,7 @@ func mainRetCode() int {
 	flag.Usage = usage
 	flag.BoolVar(&de.inspectAllPkgs, "a", false, "inspect all packages of the dependency, not just those that are used")
 	flag.BoolVar(&de.unusedDep, "unused-dep", false, "inspect dependency that is not used in this module")
+	flag.BoolVar(&de.upgradeTransDeps, "u", false, "upgrade transitive dependencies and inspect them as well")
 	flag.StringVar(&de.outputFile, "o", "", "file to write output HTML to")
 	flag.BoolVar(&de.verbose, "v", false, "print commands being run and verbose information")
 	flag.BoolVar(&printVersion, "version", false, "print version and build information and exit")
@@ -132,12 +144,9 @@ func mainErr(ctx context.Context, de *depInspector) (ret error) {
 		return err
 	}
 	defer func() {
-		restoreErr := de.restoreGoMod()
-		if ret != nil {
-			ret = errors.Join(ret, restoreErr)
-		} else {
-			ret = restoreErr
-		}
+		restoreErr := de.restoreGoMod(de.modBackupFiles)
+		closeErr := de.closeFiles()
+		ret = errors.Join(ret, restoreErr, closeErr)
 	}()
 
 	if flag.NArg() == 1 {
@@ -154,7 +163,7 @@ func mainErr(ctx context.Context, de *depInspector) (ret error) {
 			return err
 		}
 
-		return de.inspectSingleDep(ctx, dep, ver)
+		return de.inspectSingleDepVersion(ctx, dep, ver)
 	}
 
 	dep := flag.Arg(0)
@@ -167,21 +176,57 @@ func mainErr(ctx context.Context, de *depInspector) (ret error) {
 		return fmt.Errorf("checking new version: %w", err)
 	}
 	if oldVer == newVer {
-		return errors.New("cannot compare; old version and new version are the same")
+		return errors.New("cannot compare: old version and new version are the same")
+	}
+	if semver.Compare(oldVer, newVer) == 1 {
+		return fmt.Errorf("cannot compare: %q is greater than %q. old version must be less than new version", oldVer, newVer)
 	}
 
-	return de.compareDepVersions(ctx, dep, oldVer, newVer)
+	return de.compareDepVersionsRecursively(ctx, dep, oldVer, newVer)
 }
 
-func (d *depInspector) init(ctx context.Context) (err error) {
-	if err := d.parseAndBackupGoMod(ctx); err != nil {
+func (d *depInspector) init(ctx context.Context) error {
+	d.modBackupFiles = new(modFilePair)
+	d.oldModBackupFiles = new(modFilePair)
+	d.newModBackupFiles = new(modFilePair)
+
+	// open go.mod and go.sum
+	var output bytes.Buffer
+	err := d.runCommand(ctx, &output, "go", "env", "GOMOD")
+	if err != nil {
+		return fmt.Errorf("finding GOMOD: %w", err)
+	}
+	d.modFilePath = trimNewline(output.String())
+	d.sumFilePath = filepath.Join(filepath.Dir(d.modFilePath), "go.sum")
+
+	d.parsedModFile, err = d.parseAndBackupGoMod(d.modBackupFiles)
+	if err != nil {
 		return err
 	}
 	d.modCache, err = d.getGoModCache(ctx)
 	if err != nil {
 		return err
 	}
+
 	return nil
+}
+
+func (d *depInspector) openModFiles() (*modFilePair, error) {
+	var (
+		files = new(modFilePair)
+		err   error
+	)
+
+	files.modFile, err = os.OpenFile(d.modFilePath, os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	files.sumFile, err = os.OpenFile(d.sumFilePath, os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+
+	return files, nil
 }
 
 func (d *depInspector) checkVersion(dep, ver string) (string, error) {
@@ -214,8 +259,8 @@ func (d *depInspector) checkVersion(dep, ver string) (string, error) {
 	return ver, nil
 }
 
-func (d *depInspector) inspectSingleDep(ctx context.Context, dep, version string) error {
-	capResult, lintIssues, err := d.inspectDep(ctx, dep, version)
+func (d *depInspector) inspectSingleDepVersion(ctx context.Context, dep, version string) error {
+	capResult, lintIssues, err := d.inspectDep(ctx, d.newModBackupFiles, dep, version, true)
 	if err != nil {
 		return err
 	}
@@ -243,9 +288,9 @@ func (d *depInspector) inspectSingleDep(ctx context.Context, dep, version string
 	return nil
 }
 
-func (d *depInspector) inspectDep(ctx context.Context, dep, version string) (*capslockResult, []*lintIssue, error) {
+func (d *depInspector) inspectDep(ctx context.Context, modBackupFiles *modFilePair, dep, version string, newDepVer bool) (*capslockResult, []*lintIssue, error) {
 	versionStr := makeVersionStr(dep, version)
-	if err := d.setupDepVersion(ctx, versionStr); err != nil {
+	if err := d.setupDepVersion(ctx, modBackupFiles, versionStr, newDepVer); err != nil {
 		return nil, nil, fmt.Errorf("setting up dependency: %w", err)
 	}
 
@@ -312,6 +357,81 @@ func (d *depInspector) inspectDep(ctx context.Context, dep, version string) (*ca
 	return <-capsCh, <-issuesCh, nil
 }
 
+type changedDep struct {
+	dep    string
+	oldVer string
+	newVer string
+}
+
+func (d *depInspector) compareDepVersionsRecursively(ctx context.Context, dep, oldVer, newVer string) error {
+	if err := d.setupDepVersion(ctx, d.oldModBackupFiles, makeVersionStr(dep, oldVer), false); err != nil {
+		return fmt.Errorf("setting up dependency: %w", err)
+	}
+	oldModFile, err := d.parseAndBackupGoMod(d.oldModBackupFiles)
+	if err != nil {
+		return err
+	}
+	if err := d.setupDepVersion(ctx, d.newModBackupFiles, makeVersionStr(dep, newVer), true); err != nil {
+		return fmt.Errorf("setting up dependency: %w", err)
+	}
+	newModFile, err := d.parseAndBackupGoMod(d.newModBackupFiles)
+	if err != nil {
+		return err
+	}
+
+	var depsToInspect []changedDep
+	for _, newDep := range newModFile.Require {
+		var found bool
+		for _, oldDep := range oldModFile.Require {
+			if oldDep.Mod.Path != newDep.Mod.Path {
+				continue
+			}
+
+			modPath := oldDep.Mod.Path
+			if modPath == dep && oldDep.Mod.Version != oldVer {
+				return fmt.Errorf("cannot compare: after getting %s@%s and tidying the module version is %s", dep, oldVer, oldDep.Mod.Version)
+			}
+			if modPath == dep && newDep.Mod.Version != newVer {
+				return fmt.Errorf("cannot compare: after getting %s@%s and tidying the module version is %s", dep, newVer, newDep.Mod.Version)
+			}
+
+			found = true
+			if oldDep.Mod.Version != newDep.Mod.Version {
+				depsToInspect = append(depsToInspect, changedDep{
+					dep:    oldDep.Mod.Path,
+					oldVer: oldDep.Mod.Version,
+					newVer: newDep.Mod.Version,
+				})
+				break
+			}
+		}
+
+		if !found {
+			depsToInspect = append(depsToInspect, changedDep{
+				dep:    newDep.Mod.Path,
+				newVer: newDep.Mod.Version,
+			})
+		}
+	}
+
+	for _, depToInspect := range depsToInspect {
+		log.Printf("inspecting %s", depToInspect.dep)
+		if depToInspect.oldVer == "" {
+			err := d.inspectSingleDepVersion(ctx, depToInspect.dep, depToInspect.newVer)
+			if err != nil {
+				log.Printf("error inspecting newly added dep: %v", err)
+			}
+		} else {
+			err := d.compareDepVersions(ctx, depToInspect.dep, depToInspect.oldVer, depToInspect.newVer)
+			if err != nil {
+				log.Printf("error comparing versions of dep: %v", err)
+			}
+		}
+	}
+
+	return nil
+}
+
 func (d *depInspector) compareDepVersions(ctx context.Context, dep, oldVer, newVer string) error {
 	results, err := d.inspectDepVersions(ctx, dep, oldVer, newVer)
 	if err != nil {
@@ -333,11 +453,7 @@ func (d *depInspector) compareDepVersions(ctx context.Context, dep, oldVer, newV
 		return err
 	}
 
-	err = browser.OpenReader(r)
-	if err != nil {
-		return err
-	}
-	return nil
+	return browser.OpenReader(r)
 }
 
 type inspectResults struct {
@@ -354,13 +470,13 @@ type inspectResults struct {
 
 func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newVer string) (*inspectResults, error) {
 	// inspect old version
-	oldCaps, oldLintIssues, err := d.inspectDep(ctx, dep, oldVer)
+	oldCaps, oldLintIssues, err := d.inspectDep(ctx, d.oldModBackupFiles, dep, oldVer, false)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting %s: %w", makeVersionStr(dep, oldVer), err)
 	}
 
 	// inspect new version
-	newCaps, newLintIssues, err := d.inspectDep(ctx, dep, newVer)
+	newCaps, newLintIssues, err := d.inspectDep(ctx, d.newModBackupFiles, dep, newVer, true)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting %s: %w", makeVersionStr(dep, newVer), err)
 	}
@@ -383,103 +499,75 @@ func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newV
 	}, nil
 }
 
-func (d *depInspector) parseAndBackupGoMod(ctx context.Context) (ret error) {
-	// parse go.mod
+func (d *depInspector) parseAndBackupGoMod(modBackupFiles *modFilePair) (_ *modfile.File, ret error) {
+	modFiles, err := d.openModFiles()
+	if err != nil {
+		return nil, err
+	}
+	defer modFiles.Close()
+
 	var output bytes.Buffer
-	err := d.runCommand(ctx, &output, "go", "env", "GOMOD")
-	if err != nil {
-		return fmt.Errorf("finding GOMOD: %w", err)
+	if _, err := io.Copy(&output, modFiles.modFile); err != nil {
+		return nil, fmt.Errorf("reading go.mod: %w", err)
 	}
-	modFilePath := trimNewline(output.String())
-
-	// ensure all files will be closed if an error occurred
-	defer func() {
-		if ret != nil {
-			ret = errors.Join(ret, d.closeFiles())
-		}
-	}()
-
-	d.modFile, err = os.OpenFile(modFilePath, os.O_RDWR, 0o644)
+	parsedModFile, err := modfile.Parse(d.modFilePath, output.Bytes(), nil)
 	if err != nil {
-		return err
-	}
-	output.Reset()
-	if _, err := io.Copy(&output, d.modFile); err != nil {
-		return fmt.Errorf("reading go.mod: %w", err)
-	}
-	d.parsedModFile, err = modfile.Parse(modFilePath, output.Bytes(), nil)
-	if err != nil {
-		return fmt.Errorf("parsing go.mod: %w", err)
+		return nil, fmt.Errorf("parsing go.mod: %w", err)
 	}
 
 	// create backups of go.mod and go.sum so we can restore them after
 	// analysis is finished
-	d.modBackupFile, err = os.CreateTemp("", "go.mod.bak")
+	modBackupFiles.modFile, err = os.CreateTemp("", "go.mod.bak")
 	if err != nil {
-		return fmt.Errorf("creating backup go.mod file: %w", err)
+		return nil, fmt.Errorf("creating backup go.mod file: %w", err)
 	}
-	d.sumBackupFile, err = os.CreateTemp("", "go.sum.bak")
+	modBackupFiles.sumFile, err = os.CreateTemp("", "go.sum.bak")
 	if err != nil {
-		return fmt.Errorf("creating backup go.sum file: %w", err)
+		return nil, fmt.Errorf("creating backup go.sum file: %w", err)
 	}
 
-	if _, err := io.Copy(d.modBackupFile, &output); err != nil {
-		return fmt.Errorf("copying go.mod: %w", err)
+	if _, err := io.Copy(modBackupFiles.modFile, &output); err != nil {
+		return nil, fmt.Errorf("copying go.mod: %w", err)
 	}
-	if err := d.modBackupFile.Sync(); err != nil {
-		return err
-	}
-	sumFilePath := filepath.Join(filepath.Dir(modFilePath), "go.sum")
-	d.sumFile, err = os.OpenFile(sumFilePath, os.O_RDWR, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(d.sumBackupFile, d.sumFile); err != nil {
-		return fmt.Errorf("copying go.sum: %w", err)
-	}
-	if err := d.sumBackupFile.Sync(); err != nil {
-		return err
+	if err := modBackupFiles.modFile.Sync(); err != nil {
+		return nil, err
 	}
 
-	return err
+	if _, err := io.Copy(modBackupFiles.sumFile, modFiles.sumFile); err != nil {
+		return nil, fmt.Errorf("copying go.sum: %w", err)
+	}
+	if err := modBackupFiles.sumFile.Sync(); err != nil {
+		return nil, err
+	}
+
+	return parsedModFile, err
 }
 
-func (d *depInspector) restoreGoMod() (ret error) {
-	// ensure all files will be closed and errors reported
-	defer func() {
-		closeErr := d.closeFiles()
-		if ret != nil {
-			ret = errors.Join(ret, closeErr)
-		} else {
-			ret = closeErr
-		}
-	}()
-
-	// truncate go.mod and go.sum in case they are currently larger
-	// than the size of the backups
-	if err := d.modFile.Truncate(0); err != nil {
-		return fmt.Errorf("truncating go.mod: %w", err)
+func (d *depInspector) restoreGoMod(modBackupFiles *modFilePair) (ret error) {
+	modFiles, err := d.openModFiles()
+	if err != nil {
+		return err
 	}
-	if err := d.sumFile.Truncate(0); err != nil {
-		return fmt.Errorf("truncating go.sum: %w", err)
+	defer modFiles.Close()
+
+	if err := modFiles.modFile.Truncate(0); err != nil {
+		return err
+	}
+	if err := modFiles.sumFile.Truncate(0); err != nil {
+		return err
 	}
 
-	seekers := []io.Seeker{
-		d.modFile,
-		d.sumFile,
-		d.modBackupFile,
-		d.sumBackupFile,
+	if _, err := modBackupFiles.modFile.Seek(0, io.SeekStart); err != nil {
+		return err
 	}
-	for _, seeker := range seekers {
-		if _, err := seeker.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
+	if _, err := modBackupFiles.sumFile.Seek(0, io.SeekStart); err != nil {
+		return err
 	}
 
-	if _, err := io.Copy(d.modFile, d.modBackupFile); err != nil {
+	if _, err := io.Copy(modFiles.modFile, modBackupFiles.modFile); err != nil {
 		return fmt.Errorf("restoring go.mod: %w", err)
 	}
-	if _, err := io.Copy(d.sumFile, d.sumBackupFile); err != nil {
+	if _, err := io.Copy(modFiles.sumFile, modBackupFiles.sumFile); err != nil {
 		return fmt.Errorf("restoring go.sum: %w", err)
 	}
 
@@ -487,19 +575,22 @@ func (d *depInspector) restoreGoMod() (ret error) {
 }
 
 func (d *depInspector) closeFiles() error {
-	closers := []io.Closer{
-		d.modFile,
-		d.sumFile,
-		d.modBackupFile,
-		d.sumBackupFile,
+	pairs := []*modFilePair{
+		d.modBackupFiles,
+		d.oldModBackupFiles,
+		d.newModBackupFiles,
 	}
 	var errs []error
-	for _, closer := range closers {
-		if closer == nil {
-			continue
+	for _, filePair := range pairs {
+		if filePair.modFile != nil {
+			if err := filePair.modFile.Close(); err != nil {
+				errs = append(errs, err)
+			}
 		}
-		if err := closer.Close(); err != nil {
-			errs = append(errs, err)
+		if filePair.sumFile != nil {
+			if err := filePair.sumFile.Close(); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 
@@ -527,16 +618,24 @@ func (d *depInspector) getGoModCache(ctx context.Context) (string, error) {
 	return sb.String()[:sb.Len()-1], nil
 }
 
-func (d *depInspector) setupDepVersion(ctx context.Context, versionStr string) error {
+func (d *depInspector) setupDepVersion(ctx context.Context, modBackupFiles *modFilePair, versionStr string, newDepVersion bool) error {
+	if modBackupFiles.modFile != nil && modBackupFiles.sumFile != nil {
+		return d.restoreGoMod(modBackupFiles)
+	}
+
 	log.Printf("setting up %s", versionStr)
-	// add dep to go.mod so linting it will work
-	err := d.runGoCommand(ctx, "go", "get", versionStr)
-	if err != nil {
+	cmd := []string{"go", "get"}
+	if newDepVersion && d.upgradeTransDeps {
+		cmd = append(cmd, "-u")
+	}
+	cmd = append(cmd, versionStr)
+
+	// add dep to go.mod so running tools against it will work
+	if err := d.runGoCommand(ctx, cmd...); err != nil {
 		return fmt.Errorf("downloading %q: %w", versionStr, err)
 	}
 	if !d.unusedDep {
-		err = d.runGoCommand(ctx, "go", "mod", "tidy")
-		if err != nil {
+		if err := d.runGoCommand(ctx, "go", "mod", "tidy"); err != nil {
 			return fmt.Errorf("tidying modules: %w", err)
 		}
 	}
