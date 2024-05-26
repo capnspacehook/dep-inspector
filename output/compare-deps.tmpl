@@ -60,5 +60,19 @@
 </details>
 {{- end -}}
 {{- template "totals.tmpl" .OldFindings.Totals -}}
+<details>
+    <summary>New packages inspected</summary>
+    <div style="padding-left: 1ch">
+    {{- range $_, $pkg := .NewPackages -}}
+    <li style="margin: 0">{{ $pkg }}</ul>
+    {{- end -}}
+</details>
+<details>
+    <summary>Old packages inspected</summary>
+    <div style="padding-left: 1ch">
+    {{- range $_, $pkg := .OldPackages -}}
+    <li style="margin: 0">{{ $pkg }}</ul>
+    {{- end -}}
+</details>
 </body>
 </html>

@@ -260,12 +260,12 @@ func (d *depInspector) checkVersion(dep, ver string) (string, error) {
 }
 
 func (d *depInspector) inspectSingleDepVersion(ctx context.Context, dep, version string) error {
-	capResult, lintIssues, err := d.inspectDep(ctx, d.newModBackupFiles, dep, version, true)
+	capResult, lintIssues, pkgsInspected, err := d.inspectDep(ctx, d.newModBackupFiles, dep, version, true)
 	if err != nil {
 		return err
 	}
 
-	r, err := d.singleDepHTMLOutput(ctx, dep, version, capResult, lintIssues)
+	r, err := d.singleDepHTMLOutput(ctx, dep, version, pkgsInspected, capResult, lintIssues)
 	if err != nil {
 		return err
 	}
@@ -288,16 +288,16 @@ func (d *depInspector) inspectSingleDepVersion(ctx context.Context, dep, version
 	return nil
 }
 
-func (d *depInspector) inspectDep(ctx context.Context, modBackupFiles *modFilePair, dep, version string, newDepVer bool) (*capslockResult, []*lintIssue, error) {
+func (d *depInspector) inspectDep(ctx context.Context, modBackupFiles *modFilePair, dep, version string, newDepVer bool) (*capslockResult, []*lintIssue, []string, error) {
 	versionStr := makeVersionStr(dep, version)
 	if err := d.setupDepVersion(ctx, modBackupFiles, versionStr, newDepVer); err != nil {
-		return nil, nil, fmt.Errorf("setting up dependency: %w", err)
+		return nil, nil, nil, fmt.Errorf("setting up dependency: %w", err)
 	}
 
 	modPath := d.parsedModFile.Module.Mod.Path
 	pkgs, err := listPackages(modPath)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// if -unused-dep wasn't passed make sure the dependency is actually
 	// dependency or running tools will fail
@@ -310,7 +310,7 @@ func (d *depInspector) inspectDep(ctx context.Context, modBackupFiles *modFilePa
 			}
 		}
 		if !depIsUsed {
-			return nil, nil, fmt.Errorf("%s is not used in %s, run again with the -unused-dep flag", versionStr, modPath)
+			return nil, nil, nil, fmt.Errorf("%s is not used in %s, run again with the -unused-dep flag", versionStr, modPath)
 		}
 	}
 
@@ -351,10 +351,23 @@ func (d *depInspector) inspectDep(ctx context.Context, modBackupFiles *modFilePa
 		inspectErrs = append(inspectErrs, err)
 	}
 	if len(inspectErrs) != 0 {
-		return nil, nil, errors.Join(inspectErrs...)
+		return nil, nil, nil, errors.Join(inspectErrs...)
 	}
 
-	return <-capsCh, <-issuesCh, nil
+	var pkgsInspected []string
+	if d.inspectAllPkgs || d.unusedDep {
+		pkgsInspected = []string{dep + "/..."}
+	} else {
+		for _, pkg := range pkgs {
+			if !strings.HasPrefix(pkg.PkgPath, dep) {
+				continue
+			}
+			pkgsInspected = append(pkgsInspected, pkg.PkgPath)
+		}
+	}
+	slices.Sort(pkgsInspected)
+
+	return <-capsCh, <-issuesCh, pkgsInspected, nil
 }
 
 type changedDep struct {
@@ -466,17 +479,20 @@ type inspectResults struct {
 	fixedIssues []*lintIssue
 	staleIssues []*lintIssue
 	newIssues   []*lintIssue
+
+	newPackages []string
+	oldPackages []string
 }
 
 func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newVer string) (*inspectResults, error) {
 	// inspect old version
-	oldCaps, oldLintIssues, err := d.inspectDep(ctx, d.oldModBackupFiles, dep, oldVer, false)
+	oldCaps, oldLintIssues, oldPackages, err := d.inspectDep(ctx, d.oldModBackupFiles, dep, oldVer, false)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting %s: %w", makeVersionStr(dep, oldVer), err)
 	}
 
 	// inspect new version
-	newCaps, newLintIssues, err := d.inspectDep(ctx, d.newModBackupFiles, dep, newVer, true)
+	newCaps, newLintIssues, newPackages, err := d.inspectDep(ctx, d.newModBackupFiles, dep, newVer, true)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting %s: %w", makeVersionStr(dep, newVer), err)
 	}
@@ -496,6 +512,8 @@ func (d *depInspector) inspectDepVersions(ctx context.Context, dep, oldVer, newV
 		fixedIssues: fixedIssues,
 		staleIssues: staleIssues,
 		newIssues:   newIssues,
+		newPackages: newPackages,
+		oldPackages: oldPackages,
 	}, nil
 }
 

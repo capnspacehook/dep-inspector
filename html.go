@@ -48,6 +48,7 @@ type singleDepResult struct {
 	ModuleRemoteURLs map[string]moduleURL
 
 	Findings findingResult
+	Packages []string
 }
 
 type moduleURL struct {
@@ -70,7 +71,7 @@ type findingResult struct {
 	ModURLs map[string]moduleURL
 }
 
-func (d *depInspector) singleDepHTMLOutput(ctx context.Context, dep, version string, capResult *capslockResult, issues []*lintIssue) (io.Reader, error) {
+func (d *depInspector) singleDepHTMLOutput(ctx context.Context, dep, version string, pkgsInspected []string, capResult *capslockResult, issues []*lintIssue) (io.Reader, error) {
 	capMods, modURLs, err := findModuleURLs(capResult.ModuleInfo)
 	if err != nil {
 		return nil, err
@@ -88,6 +89,7 @@ func (d *depInspector) singleDepHTMLOutput(ctx context.Context, dep, version str
 		Dep:              dep,
 		VersionStr:       makeVersionStr(dep, version),
 		ModuleRemoteURLs: modURLs,
+		Packages:         pkgsInspected,
 		Findings:         prepareFindingResult(dep, capResult.CapabilityInfo, issues, capMods, modURLs),
 	}
 
@@ -103,6 +105,8 @@ type compareDepsResult struct {
 	SameFindings findingResult
 	NewFindings  findingResult
 	Totals       findingTotals
+	OldPackages  []string
+	NewPackages  []string
 }
 
 func (d *depInspector) compareDepsHTMLOutput(ctx context.Context, dep, oldVer, newVer string, results *inspectResults) (io.Reader, error) {
@@ -134,6 +138,8 @@ func (d *depInspector) compareDepsHTMLOutput(ctx context.Context, dep, oldVer, n
 		OldFindings:   prepareFindingResult(dep, results.removedCaps, results.fixedIssues, oldCapMods, oldModURLs),
 		SameFindings:  prepareFindingResult(dep, results.sameCaps, results.staleIssues, newCapMods, newModURLs),
 		NewFindings:   prepareFindingResult(dep, results.addedCaps, results.newIssues, newCapMods, newModURLs),
+		NewPackages:   results.newPackages,
+		OldPackages:   results.oldPackages,
 	}
 	buildCombinedTotals(res)
 

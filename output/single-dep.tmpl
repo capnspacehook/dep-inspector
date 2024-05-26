@@ -21,5 +21,12 @@
 </details>
 {{- end -}}
 {{- template "totals.tmpl" .Findings.Totals -}}
+<details>
+    <summary>Packages inspected</summary>
+    <div style="padding-left: 1ch">
+    {{- range $_, $pkg := .Packages -}}
+    <li style="margin: 0">{{ $pkg }}</ul>
+    {{- end -}}
+</details>
 </body>
 </html>
