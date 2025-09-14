@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"maps"
 	"net/url"
 	"os"
 	"path"
@@ -23,7 +24,6 @@ import (
 	"github.com/samber/lo"
 	"github.com/tdewolff/minify/v2"
 	"github.com/tdewolff/minify/v2/html"
-	"golang.org/x/exp/maps"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 )
@@ -282,7 +282,7 @@ func findModuleURLs(capMods []capModule) ([]string, map[string]moduleURL, error)
 		modURLs[modInfo.Path] = modURL
 	}
 
-	return maps.Keys(modURLs), modURLs, nil
+	return slices.Collect(maps.Keys(modURLs)), modURLs, nil
 }
 
 func findModuleURL(modPath, version, localPath string) (moduleURL, error) {
@@ -366,9 +366,9 @@ func prepareFindingResult(dep string, caps []*capability, issues []*lintIssue, c
 
 func executeTemplate(tmpl *template.Template, data any) (io.Reader, error) {
 	var buf bytes.Buffer
-	min := minify.New()
-	min.AddFunc("text/html", html.Minify)
-	w := min.Writer("text/html", &buf)
+	minifier := minify.New()
+	minifier.AddFunc("text/html", html.Minify)
+	w := minifier.Writer("text/html", &buf)
 	if err := tmpl.Execute(w, data); err != nil {
 		return nil, fmt.Errorf("error executing output template: %w", err)
 	}

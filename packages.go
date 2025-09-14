@@ -1,11 +1,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
-	"golang.org/x/exp/maps"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -31,7 +32,7 @@ func mapLoadedPkgs(pkgs []*packages.Package, loadedPkgs loadedPackages) {
 		}
 
 		loadedPkgs[pkg.PkgPath] = pkg
-		mapLoadedPkgs(maps.Values(pkg.Imports), loadedPkgs)
+		mapLoadedPkgs(slices.Collect(maps.Values(pkg.Imports)), loadedPkgs)
 	}
 }
 
@@ -47,7 +48,7 @@ func listImportedPackages(dep string, pkgs loadedPackages) ([]string, error) {
 		if !ok {
 			return nil, fmt.Errorf("couldn't find package %s", pkg)
 		}
-		pkgImports[importedPkg.PkgPath] = maps.Keys(importedPkg.Imports)
+		pkgImports[importedPkg.PkgPath] = slices.Collect(maps.Keys(importedPkg.Imports))
 	}
 
 	// don't add a package to be checked if another package imports it,
@@ -68,7 +69,7 @@ func listImportedPackages(dep string, pkgs loadedPackages) ([]string, error) {
 	}
 
 	if len(importsToCheck) == 0 {
-		return nil, fmt.Errorf("there are no packages to check with capslock")
+		return nil, errors.New("there are no packages to check with capslock")
 	}
 
 	return importsToCheck, nil

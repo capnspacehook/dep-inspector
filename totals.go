@@ -1,11 +1,11 @@
 package main
 
 import (
+	"maps"
 	"slices"
 	"strings"
 
 	"github.com/samber/lo"
-	"golang.org/x/exp/maps"
 )
 
 type findingTotals struct {
@@ -68,8 +68,8 @@ func currentTotals(rmFindings, sameFindings, newFindings map[string]int) (int, m
 	currentTotalFindings := maps.Clone(sameFindings)
 	deltaTotalFindings := make(map[string]int, len(sameFindings)+len(newFindings))
 
-	allNames := append(maps.Keys(rmFindings), maps.Keys(sameFindings)...)
-	allNames = append(allNames, maps.Keys(newFindings)...)
+	allNames := append(slices.Collect(maps.Keys(rmFindings)), slices.Collect(maps.Keys(sameFindings))...)
+	allNames = append(allNames, slices.Collect(maps.Keys(newFindings))...)
 	slices.Sort(allNames)
 	allNames = slices.Compact(allNames)
 
