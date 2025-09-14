@@ -1,26 +1,8 @@
-issues:
-  exclude-rules:
-    # Ignore gocritic checks that produce too many false positives or
-    # don't check for potential bugs a downstream application could
-    # observe. Ideally these would be disabled below but gocritic checks
-    # can't be both selectively enabled and disabled.
-    - linters:
-        - gocritic
-      text: "appendAssign:"
-    - linters:
-        - gocritic
-      text: "deprecatedComment:"
-    # For some reason typecheck can have many false positives, skip them
-    # as ultimately if typechecking errors do exist, they will be found
-    # during development
-    - linters:
-        - typecheck
-      text: ".*"
-  max-same-issues: 0
-  max-issues-per-linter: 0
-
+version: "2"
+run:
+  tests: false
 linters:
-  disable-all: true
+  default: none
   enable:
     - asasalint
     - bidichk
@@ -35,41 +17,63 @@ linters:
     - revive
     - rowserrcheck
     - sqlclosecheck
-
-linters-settings:
-  asasalint:
-    exclude:
-      - append
-  errcheck:
-    exclude-functions:
-      # TODO: doesn't work?
-      - io.Copy(ioutil.Discard)
-      - io.CopyN(ioutil.Discard)
-      - (go.uber.org/zap/zapcore.ObjectEncoder).AddObject
-  errorlint:
-    errorf: false
-  gocritic:
-    enabled-checks:
-      - truncateCmp
-      - sqlQuery
-    enabled-tags:
-      - diagnostic
-    disabled-tags:
-      - experimental
-      - opinionated
-      - performance
-      - style
-  govet:
-    disable:
-      - composites
-  reassign:
-    patterns:
-      - ".*"
-  revive:
+  settings:
+    asasalint:
+      exclude:
+        - append
+    errcheck:
+      exclude-functions:
+        - io.Copy(ioutil.Discard)
+        - io.CopyN(ioutil.Discard)
+        - (go.uber.org/zap/zapcore.ObjectEncoder).AddObject
+    errorlint:
+      errorf: false
+    gocritic:
+      enabled-checks:
+        - truncateCmp
+        - sqlQuery
+      enabled-tags:
+        - diagnostic
+      disabled-tags:
+        - experimental
+        - opinionated
+        - performance
+        - style
+    govet:
+      disable:
+        - composites
+    reassign:
+      patterns:
+        - .*
+    revive:
+      rules:
+        - name: blank-imports
+          disabled: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      - name: blank-imports
-        disabled: true
-
-run:
-  tests: false
-  timeout: 10m
+      - linters:
+          - gocritic
+        text: 'appendAssign:'
+      - linters:
+          - gocritic
+        text: 'deprecatedComment:'
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

@@ -148,20 +148,20 @@ func (d *depInspector) lintDepVersion(ctx context.Context, dep, version string, 
 func (d *depInspector) golangciLint(ctx context.Context, dirs []string) ([]*lintIssue, error) {
 	// write embedded golangci-lint config to a temporary file to it can
 	// be used by golangci-lint
-	cfgDir, err := os.MkdirTemp("", tempPrefix)
+	tempDir, err := os.MkdirTemp("", tempPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("creating temporary directory: %w", err)
 	}
-	defer os.RemoveAll(cfgDir)
-	golangciCfgPath := filepath.Join(cfgDir, golangciCfgName)
-	if err := os.WriteFile(golangciCfgPath, golangciCfgContents, 0o644); err != nil {
+	defer os.RemoveAll(tempDir)
+	cfgPath := filepath.Join(tempDir, golangciCfgName)
+	if err := os.WriteFile(cfgPath, golangciCfgContents, 0o644); err != nil {
 		return nil, fmt.Errorf("writing golangci-lint config file: %w", err)
 	}
+	outputPath := filepath.Join(tempDir, "output.json")
 
-	var output bytes.Buffer
-	cmd := []string{"golangci-lint", "run", "-c", golangciCfgPath, "--out-format=json"}
+	cmd := []string{"golangci-lint", "run", "-c", cfgPath, "--output.json.path", outputPath}
 	cmd = append(cmd, dirs...)
-	err = d.runCommand(ctx, &output, cmd...)
+	err = d.runCommand(ctx, nil, cmd...)
 	if err != nil {
 		// golangci-lint will exit with 1 if any linters returned issues,
 		// but that doesn't mean it itself failed
@@ -171,8 +171,13 @@ func (d *depInspector) golangciLint(ctx context.Context, dirs []string) ([]*lint
 		}
 	}
 
+	output, err := os.ReadFile(outputPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading golangci-lint output file: %w", err)
+	}
+
 	var results golangciResult
-	if err := json.Unmarshal(output.Bytes(), &results); err != nil {
+	if err := json.Unmarshal(output, &results); err != nil {
 		return nil, fmt.Errorf("decoding golangci-lint results: %w", err)
 	}
 
