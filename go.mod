@@ -8,7 +8,7 @@ require (
 	github.com/samber/lo v1.52.0
 	github.com/tdewolff/minify/v2 v2.24.7
 	golang.org/x/mod v0.29.0
-	golang.org/x/tools v0.37.0
+	golang.org/x/tools v0.38.0
 )
 
 require (
