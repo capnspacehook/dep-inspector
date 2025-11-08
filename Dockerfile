@@ -3,7 +3,7 @@ FROM golang:1.25.4-alpine AS builder
 WORKDIR /git
 
 # build statically compiled git
-# hadolint ignore=DL3018
+#hadolint ignore=DL3018
 RUN apk add --no-cache curl autoconf gcc flex bison make bash cmake libtool musl-dev g++ \
     zlib-dev zlib-static \
     tcl tk \
@@ -41,7 +41,8 @@ WORKDIR /usr/local/go
 # remove unneeded files from Go toolchain
 RUN  rm -r codereview.cfg CONTRIBUTING.md LICENSE PATENTS README.md SECURITY.md api/ doc/ misc/ test/
 
-FROM gcr.io/distroless/static-debian12:latest
+#hadolint ignore=DL3007
+FROM gcr.io/distroless/static-debian13:latest
 
 # copy git, Go toolchain, dep-inspector and commands it needs
 COPY --from=builder /bin/git /bin/
