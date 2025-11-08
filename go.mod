@@ -7,7 +7,7 @@ require (
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8
 	github.com/samber/lo v1.52.0
 	github.com/tdewolff/minify/v2 v2.24.7
-	golang.org/x/mod v0.28.0
+	golang.org/x/mod v0.29.0
 	golang.org/x/tools v0.37.0
 )
 
