@@ -4,9 +4,19 @@ on:
   push:
     branches:
       - master
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/test.yml"
   pull_request:
     branches:
       - "*"
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/test.yml"
 
   workflow_dispatch: {}
 
@@ -15,3 +25,5 @@ jobs:
     permissions:
       contents: read
     uses: capnspacehook/go-workflows/.github/workflows/test.yml@master
+    with:
+      run-fuzz-tests: false
