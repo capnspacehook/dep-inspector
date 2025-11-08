@@ -32,6 +32,7 @@ ARG CGO_ENABLED=0
 ARG VERSION=devel
 RUN go build -buildvcs=true -ldflags "-s -w -X main.version=${VERSION}" -trimpath -o dep-inspector
 
+#hadolint ignore=DL3062
 RUN go install -ldflags "-s -w" -trimpath github.com/golangci/golangci-lint/cmd/golangci-lint@latest && \
     go install -ldflags "-s -w" -trimpath honnef.co/go/tools/cmd/staticcheck@latest && \
     go install -ldflags "-s -w" -trimpath github.com/google/capslock/cmd/capslock@main
