@@ -33,14 +33,14 @@ ARG VERSION=devel
 RUN go build -buildvcs=true -ldflags "-s -w -X main.version=${VERSION}" -trimpath -o dep-inspector
 
 #hadolint ignore=DL3062
-RUN go install -ldflags "-s -w" -trimpath github.com/golangci/golangci-lint/cmd/golangci-lint@latest && \
+RUN go install -ldflags "-s -w" -trimpath github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest && \
     go install -ldflags "-s -w" -trimpath honnef.co/go/tools/cmd/staticcheck@latest && \
     go install -ldflags "-s -w" -trimpath github.com/google/capslock/cmd/capslock@main
 
 WORKDIR /usr/local/go
 
 # remove unneeded files from Go toolchain
-RUN  rm -r codereview.cfg CONTRIBUTING.md LICENSE PATENTS README.md SECURITY.md api/ doc/ misc/ test/
+RUN rm -r codereview.cfg CONTRIBUTING.md LICENSE PATENTS README.md SECURITY.md api/ doc/ misc/ test/
 
 #hadolint ignore=DL3007
 FROM gcr.io/distroless/static-debian13:latest
@@ -51,8 +51,8 @@ COPY --from=builder /usr/local/go/ /usr/local/go/
 COPY --from=builder /build/dep-inspector /bin/
 COPY --from=builder /go/bin /bin/
 
-ENV PATH=/usr/local/go/bin:${GOPATH}/bin:${PATH}
 ENV GOPATH=/go
+ENV PATH=/usr/local/go/bin:${GOPATH}/bin:${PATH}
 ENV GOTOOLCHAIN=local
 
 WORKDIR /work
