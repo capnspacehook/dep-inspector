@@ -1,6 +1,6 @@
 module github.com/capnspacehook/dep-inspector
 
-go 1.25.1
+go 1.25.4
 
 require (
 	github.com/Masterminds/vcs v1.13.3
